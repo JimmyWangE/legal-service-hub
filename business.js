@@ -45,11 +45,25 @@ const reason = (value) => {
   );
   return String(value).trim();
 };
+function modelAnswer(prompt, topic) {
+  const urgent = /拘留|羁押|逮捕|传唤|强制措施|时效|转移财产/.test(prompt);
+  const checkpoints = {
+    合同问题: "合同全文、签订与履行时间、付款情况、双方沟通和约定的交付物。",
+    劳动争议: "在职时间、劳动合同、工资记录、相关通知和希望解决的事项。",
+    婚姻家事: "涉及的家庭关系、事件经过、财产资料和需要核实的事实。",
+    公司商事: "主体和股东信息、章程或协议、通知与会议记录、争议的具体事项。",
+    刑事问题: "涉案身份、事件时间与地区、是否已采取强制措施以及已有通知材料。",
+    综合咨询: "事件经过、关键日期、涉及主体、已有材料和具体诉求。",
+  };
+  const text = `## ${topic} · 信息整理示例\n以下内容演示咨询回复的组织方式，尚未调用真实法律模型，也未读取附件。\n\n## 1. 待核实的信息\n${checkpoints[topic] || checkpoints["综合咨询"]}\n\n## 2. 把问题拆开\n事实：哪些内容已经有材料支持？\n争议：各方在哪些事项上存在分歧？\n目标：希望咨询、审阅材料，还是起草文书？\n\n## 3. 下一步工作区\n继续补充事实，或点击“转为服务需求”，在确认公开范围后联系律师。\n\n本地演示内容仅供界面体验，不构成针对问题的法律意见。`;
+  return { text, risk: urgent };
+}
 export function seed() {
   const created = now();
   return {
     schema: 1,
     sessions: [],
+    modelChats: [],
     requests: [
       {
         id: "R1001",
@@ -338,6 +352,149 @@ export function dispatch(db, actor, action, p = {}) {
 }
 function applyAction(db, actor, action, p = {}) {
   let result;
+  if (action === "model-chat") {
+    requireThat(actor.role === "client", "法律模型咨询仅对当事人开放");
+    requireThat(
+      String(p.prompt || "").trim().length >= 2,
+      "请输入具体的法律问题",
+    );
+    const prompt = String(p.prompt).trim();
+    requireThat(prompt.length <= 8000, "单次提问不能超过8000字");
+    const topic = p.topic || "综合咨询";
+    const answer = modelAnswer(prompt, topic);
+    const chat = {
+      id: id("MC"),
+      owner: actor.id,
+      topic,
+      title: prompt.slice(0, 34),
+      messages: [
+        {
+          role: "user",
+          text: prompt,
+          attachments: p.attachments || [],
+          created: now(),
+        },
+        {
+          role: "assistant",
+          text: answer.text,
+          risk: answer.risk,
+          created: now(),
+        },
+      ],
+      created: now(),
+      updated: now(),
+      feedback: "",
+      contextEnabled: p.contextEnabled !== false,
+    };
+    (db.modelChats ??= []).unshift(chat);
+    log(db, actor, "法律模型咨询", chat.id, chat.topic);
+    result = chat;
+  }
+  if (action === "model-message") {
+    requireThat(actor.role === "client", "法律模型咨询仅对当事人开放");
+    const chat = get(db.modelChats || [], p.id, "模型咨询");
+    requireThat(chat.owner === actor.id, "无权访问此咨询");
+    const prompt = String(p.prompt || "").trim();
+    requireThat(
+      prompt.length >= 2 && prompt.length <= 8000,
+      "请输入2至8000字的具体问题",
+    );
+    const contextEnabled = p.contextEnabled !== false;
+    const context = contextEnabled
+      ? chat.messages
+          .filter((m) => m.role === "user")
+          .map((m) => m.text)
+          .concat(prompt)
+          .join("\n")
+      : prompt;
+    const answer = modelAnswer(context, p.topic || chat.topic);
+    chat.messages.push(
+      {
+        role: "user",
+        text: prompt,
+        attachments: p.attachments || [],
+        created: now(),
+      },
+      {
+        role: "assistant",
+        text: answer.text,
+        risk: answer.risk,
+        created: now(),
+      },
+    );
+    chat.contextEnabled = contextEnabled;
+    chat.topic = p.topic || chat.topic;
+    chat.updated = now();
+    log(db, actor, "追问法律模型咨询", chat.id, chat.topic);
+    result = chat;
+  }
+  if (action === "model-feedback") {
+    const chat = get(db.modelChats || [], p.id, "模型咨询");
+    requireThat(
+      actor.role === "client" && chat.owner === actor.id,
+      "无权评价此咨询",
+    );
+    chat.feedback = p.value;
+    if (Number.isInteger(p.index)) {
+      requireThat(
+        chat.messages[p.index]?.role === "assistant",
+        "请选择模型回复",
+      );
+      (chat.feedbackByMessage ??= {})[p.index] = p.value;
+    }
+    chat.updated = now();
+    log(db, actor, "反馈法律模型回答", chat.id, p.value);
+    result = chat;
+  }
+  if (action === "model-summary") {
+    const chat = get(db.modelChats || [], p.id, "模型咨询");
+    requireThat(
+      actor.role === "client" && chat.owner === actor.id,
+      "无权使用此咨询",
+    );
+    const existing = db.sessions.find(
+      (s) =>
+        s.sourceChat === chat.id && s.messageCount === chat.messages.length,
+    );
+    if (existing) return existing;
+    const s = {
+      id: id("S"),
+      owner: actor.id,
+      kind: "model-summary",
+      source: "法律模型咨询",
+      sourceChat: chat.id,
+      messageCount: chat.messages.length,
+      created: now(),
+      title: chat.title,
+      goal: chat.title,
+      domain:
+        chat.topic === "刑事问题"
+          ? "刑事"
+          : chat.topic === "综合咨询"
+            ? "不确定"
+            : "民事",
+      field:
+        {
+          合同问题: "合同纠纷",
+          劳动争议: "劳动争议",
+          婚姻家事: "婚姻家事",
+          公司商事: "公司商事",
+          刑事问题: "刑事案件",
+        }[chat.topic] || "",
+      facts: chat.messages
+        .filter((m) => m.role === "user")
+        .map((m) => m.text)
+        .join("\n\n"),
+      risk: chat.messages.some((m) => m.risk),
+      attachments: chat.messages.flatMap((m) => m.attachments || []),
+      region: "",
+      time: "",
+      feedback: "",
+    };
+    db.sessions.unshift(s);
+    log(db, actor, "整理模型咨询摘要", s.id, chat.id);
+    result = s;
+  }
   if (action === "session") {
     requireThat(actor.role === "client", "请切换到当事人视角进行问答");
     requireThat(

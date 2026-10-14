@@ -36,8 +36,9 @@ npm test
 
 ## 保留的页面和流程
 
-- 当事人工作台：法律问答、需求发布、找律师、报价比较、订单、文书中心和账户安全。
+- 当事人工作台：法律问答、法律模型咨询、需求发布、找律师、报价比较、订单、文书中心和账户安全。
 - 法律问答：民事、刑事、不确定三入口，事实/地区/时间/诉求采集，刑事身份和强制措施字段，风险提示和人工律师入口。
+- 法律模型咨询：参考法律咨询 Pro 的居中输入框与三张场景卡片，支持自由提问、领域选择、连续追问、材料名称记录、完善提问、咨询历史、反馈、复制和导出；咨询中的用户提问可整理成摘要，经授权后转为服务需求。目前回复是明确标注的本地示例，未调用真实模型或解析附件。
 - 服务需求：问答摘要授权转需求，预算、地区、截止时间、交付物和公开范围；需求详情与报价列表。
 - 律师连接：认证律师列表、领域/地区筛选、律师资质信息和报价流程。
 - 订单履约：接受报价创建订单与服务合同，单次支付成功/失败重试，服务中、待交付、待确认、已完成、退款中、争议中等状态。
@@ -52,18 +53,22 @@ npm test
 - 已合并合同审查、模板审查、补充协议审查、制度审查为订单内的文书审阅与版本协作。
 - 独立类案检索、自动 AI 审查、并行会签、电子签署、分阶段付款、发票、托管结算、多组织合同管理暂缓，避免出现没有真实服务支撑的孤立入口。
 
-主要 hash 路由沿用了原站的 `appId`：
+主要业务页面使用以下 hash 路由：
 
 ```text
-#/AlphaGPT/index?appId=LAW_SEARCH_COLUMN&tab=BUSINESS_EFFECT
-#/AlphaGPT/index?appId=SIMILAR_CASE_GPT_COLUMN&tab=BUSINESS_EFFECT
-#/AlphaGPT/index?appId=CONTRACT_REVIEW_COLUMN&tab=BUSINESS_EFFECT
-#/AlphaGPT/index?appId=TEMPLATE_REVIEW_COLUMN&tab=BUSINESS_EFFECT
-#/AlphaGPT/index?appId=AGREEMENT_REVIEW_COLUMN&tab=BUSINESS_EFFECT
-#/AlphaGPT/index?appId=REGULATION_REVIEW_COLUMN&tab=BUSINESS_EFFECT
-#/AlphaGPT/index?appId=WRITING_DRAFT_COLUMN&tab=BUSINESS_EFFECT
-#/AlphaGPT/index?appId=WRITING_TABLE_GPT_COLUMN&tab=BUSINESS_EFFECT
+#/home
+#/chat
+#/model-chat
+#/model-chat/咨询ID
+#/requests
+#/lawyers
+#/orders
+#/order/订单ID
+#/docs
+#/doc/文书ID
 ```
+
+法律模型咨询通过 `model-consultation.js` 和 `model-consultation.css` 独立维护。咨询保存于原有业务存储中的 `modelChats` 字段；旧数据缺少该字段时补为空数组，保留需求、订单与文书。原始结构化问答继续使用 `sessions`。咨询转需求会创建标注来源与生成时间的摘要快照，只包含用户提问与材料元数据。
 
 ## 数据和边界
 
