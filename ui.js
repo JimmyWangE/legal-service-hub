@@ -22,6 +22,17 @@ export const date = (value) =>
 export const status = (text) =>
   `<span class="status ${["已完成", "已确认", "已认证", "已退款"].includes(text) ? "green" : ["退款中", "争议中", "已退回", "已冻结", "需补件"].includes(text) ? "red" : "orange"}">${esc(text)}</span>`;
 const paths = {
+  spark:
+    '<path d="m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6Z"/>',
+  layers: '<path d="m12 3 9 5-9 5-9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/>',
+  magic: '<path d="m4 19 12-12 3 3L7 22ZM14 9l3 3M6 3v6M3 6h6M19 2v5M17 4h5"/>',
+  attach:
+    '<path d="m14 8-7 7a3 3 0 0 0 4 4l8-8a5 5 0 0 0-7-7l-9 9a6 6 0 0 0 8 8l8-8"/>',
+  send: '<path d="m3 10 18-7-7 18-3-7Zm8 4L21 3"/>',
+  history: '<circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 10v7M12 6v1"/>',
+  copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
+  thumb: '<path d="M3 10h4v11H3ZM7 10l5-8 2 1-1 7h7v11H7"/>',
   home: '<path d="m3 10 9-7 9 7v11H3ZM9 21v-8h6v8"/>',
   chat: '<path d="M3 4h18v13h-6l-3 4-3-4H3ZM7 9h10M7 13h6"/>',
   request:

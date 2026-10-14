@@ -22,6 +22,7 @@ import {
   empty,
 } from "./ui.js";
 import { draftingTemplates } from "./data.js";
+import { createModelConsultation } from "./model-consultation.js";
 
 const app = document.querySelector("#app");
 const DB_KEY = "legal-platform-demo-db-v2";
@@ -30,11 +31,39 @@ const db = loadDb();
 let actor = actors[localStorage.getItem(ROLE_KEY) || "client"] || actors.client;
 let route = parseRoute();
 let toastTimer;
+const modelConsultation = createModelConsultation({
+  getDb: () => db,
+  getActor: () => actor,
+  refresh: render,
+  navigate,
+  notify,
+  modal,
+  closeModal,
+  download,
+  commit: (name, payload) => {
+    const result = dispatch(db, actor, name, payload);
+    saveDb();
+    return result;
+  },
+  createRequest: (chatId) => {
+    const summary = run(
+      "model-summary",
+      { id: chatId },
+      "已整理当前咨询的提问摘要",
+    );
+    if (summary) requestModal(summary.id);
+  },
+});
 
 function loadDb() {
   try {
     const value = JSON.parse(localStorage.getItem(DB_KEY));
-    return value?.schema === 1 ? value : seed();
+    return value?.schema === 1
+      ? {
+          ...value,
+          modelChats: Array.isArray(value.modelChats) ? value.modelChats : [],
+        }
+      : seed();
   } catch {
     return seed();
   }
@@ -85,6 +114,7 @@ function titleForPage() {
     {
       home: "工作台",
       chat: "法律问答",
+      "model-chat": "法律模型咨询",
       requests: "服务需求",
       lawyers: "找律师",
       orders: "我的订单",
@@ -108,9 +138,10 @@ function titleForPage() {
 function render() {
   route = parseRoute();
   document.title = `${titleForPage()} · 法律服务平台`;
-  app.innerHTML = `<div class="platform-shell">${sidebar()}<main class="platform-main"><header class="platform-topbar">${topbar()}</header><section class="page-body">${page()}</section></main></div><div id="toast" role="status" aria-live="polite"></div>`;
+  app.innerHTML = `<div class="platform-shell">${sidebar()}<main class="platform-main"><header class="platform-topbar">${topbar()}</header><section class="page-body ${route.page === "model-chat" ? "model-page-body" : ""}">${page()}</section></main></div><div id="toast" role="status" aria-live="polite"></div>`;
   enhancePage();
   bind();
+  if (route.page === "model-chat") modelConsultation.bind(app);
 }
 function sidebar() {
   const menus =
@@ -118,6 +149,7 @@ function sidebar() {
       ? [
           ["home", "工作台", "home"],
           ["chat", "法律问答", "chat"],
+          ["model-chat", "法律模型咨询", "spark"],
           ["requests", "服务需求", "request"],
           ["lawyers", "找律师", "lawyer"],
           ["orders", "我的订单", "order"],
@@ -164,6 +196,7 @@ function page() {
       ? [
           "home",
           "chat",
+          "model-chat",
           "requests",
           "lawyers",
           "orders",
@@ -202,6 +235,7 @@ function page() {
     );
   if (route.page === "home") return dashboard();
   if (route.page === "chat") return chatPage();
+  if (route.page === "model-chat") return modelConsultation.render(route);
   if (route.page === "requests")
     return route.id ? requestDetailsPage() : requestsPage();
   if (route.page === "lawyers") return lawyersPage();
@@ -232,12 +266,15 @@ function dashboard() {
     const orders = db.orders.filter((o) => o.client === actor.id),
       requests = db.requests.filter((r) => r.owner === actor.id),
       docs = db.docs.filter((d) => d.members.includes(actor.id));
-    return `${pageHeader("当事人端 · 服务全景", "把法律问题交给一套可追踪的服务流程", "从问题识别到律师连接、文书协作和交付确认，所有关键节点都在一个工作台完成。", button("quick-chat", `${icon("chat")} 开始法律问答`, "", true) + button("quick-request", `${icon("plus")} 发布需求`))}${statCards(
+    return `${pageHeader("当事人端 · 服务全景", "把法律问题交给一套可追踪的服务流程", "从问题识别到律师连接、文书协作和交付确认，所有关键节点都在一个工作台完成。", button("quick-model", `${icon("spark")} 法律模型咨询`, "", true) + button("quick-request", `${icon("plus")} 发布需求`))}${statCards(
       [
         {
           icon: "chat",
-          label: "问答会话",
-          value: db.sessions.filter((s) => s.owner === actor.id).length,
+          label: "咨询会话",
+          value:
+            db.sessions.filter(
+              (s) => s.owner === actor.id && s.kind !== "model-summary",
+            ).length + db.modelChats.filter((s) => s.owner === actor.id).length,
           note: "可授权转为需求",
         },
         {
@@ -415,7 +452,9 @@ function auditTable(items) {
     : empty("暂无审计记录");
 }
 function chatPage() {
-  const sessions = db.sessions.filter((s) => s.owner === actor.id);
+  const sessions = db.sessions.filter(
+    (s) => s.owner === actor.id && s.kind !== "model-summary",
+  );
   return `${pageHeader("P0 · 问答分流", "法律问答", "先确定服务场景，再补充事实、时间、地区和诉求。高风险事项会显示人工律师入口。", button("new-session", `${icon("plus")} 新建问答`))}<div class="chat-layout"><section class="surface chat-compose"><div class="choice-row"><span>问题类型</span>${["民事", "刑事", "不确定"].map((v) => `<button class="choice ${route.q.get("domain") === v ? "selected" : ""}" data-domain="${v}">${v}</button>`).join("")}</div><form id="session-form"><input type="hidden" name="domain" value="${esc(route.q.get("domain") || "民事")}">${field("事实经过", "facts", "", { textarea: true, wide: true, required: true, rows: 6, placeholder: "描述事件经过、涉及主体、关键材料和希望解决的问题（至少8字）" })}<div class="form-grid">${field("发生地区", "region", "北京", { required: true, placeholder: "省 / 市" })}${field("事件时间", "time", "", { required: true, type: "date" })}${field("希望解决的问题", "goal", "", { required: true, placeholder: "例如：确认风险、起草文书、联系律师" })}</div><div class="conditional-criminal ${route.q.get("domain") === "刑事" ? "show" : ""}"><div class="form-grid">${field("涉案身份", "identity", "", { required: true, placeholder: "当事人 / 亲属 / 律师等" })}${field("强制措施", "measure", "未采取", { required: true, options: ["未采取", "已采取", "不确定"] })}</div></div><div class="risk-notice">${icon("review")} ${esc(db.settings.risk)}</div><label class="check-line"><input name="confirm" type="checkbox" required> 我知道AI内容仅供一般信息参考，并确认不把演示结果作为法律意见。</label><div class="form-actions"><button class="btn" type="button" data-action="clear-session">清空</button><button class="btn primary" type="submit">整理问答摘要 ${icon("arrow")}</button></div></form></section><aside class="surface conversation-list"><div class="section-title"><h2>最近会话</h2><small>${sessions.length} 条</small></div>${
     sessions.length
       ? sessions
@@ -987,7 +1026,7 @@ function bind(root = app) {
     }),
   );
   root
-    .querySelectorAll("form")
+    .querySelectorAll("form:not(#model-consultation-form)")
     .forEach((form) => form.addEventListener("submit", submit));
   root
     .querySelectorAll(
@@ -1010,6 +1049,18 @@ function requestModal(source = "", editing = "") {
     editing ? "编辑服务需求" : "发布服务需求",
     `<form data-form="request"><input type="hidden" name="sourceSession" value="${s?.id || r?.sourceSession || ""}"><input type="hidden" name="editId" value="${r?.id || ""}">${field("需求标题", "title", r?.title || s?.goal || "", { required: true })}<div class="form-grid">${field("问题类型", "domain", r?.domain || s?.domain || "民事", { options: ["民事", "刑事", "不确定"] })}${field("服务领域", "field", r?.field || "合同纠纷", { options: db.settings.fields })}${field("服务类型", "type", r?.type || "法律咨询", { options: db.settings.services })}</div>${field("事实摘要", "facts", r?.facts || s?.facts || "", { textarea: true, required: true, rows: 4 })}<div class="form-grid">${field("地区", "region", r?.region || s?.region || "北京", { required: true })}${field("预算（元）", "budget", r?.budget || 2000, { type: "number", required: true, min: 1 })}${field("期望截止时间", "deadline", r?.deadline || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10), { type: "date", required: true })}</div>${field("期望交付物", "deliverables", r?.deliverables || "", { required: true, placeholder: "咨询意见、合同修改稿、文书初稿等" })}${field("公开范围", "visibility", r?.visibility || "认证律师可见", { options: ["认证律师可见"] })}<label class="check-line"><input type="checkbox" name="consent" required> 我确认以上摘要内容，并授权认证律师在报价流程中查看。请先移除不必要的个人敏感信息。</label>${s ? `<p class="muted">关联来源：${s.id} · ${date(s.created)}</p>` : ""}<button class="btn primary" type="submit">${editing ? "保存需求" : "发布需求"}</button></form>`,
   );
+  const form = document.querySelector(
+    '#modal-overlay form[data-form="request"]',
+  );
+  if (
+    s?.field &&
+    !r &&
+    Array.from(form.elements.field.options).some((o) => o.value === s.field)
+  )
+    form.elements.field.value = s.field;
+  if (s?.kind === "model-summary")
+    form.querySelector("p.muted").textContent =
+      `关联来源：法律模型咨询 · ${s.sourceChat} · 摘要 ${s.id} · ${date(s.created)}`;
 }
 function showLawyer(id) {
   const l = db.lawyers.find((x) => x.id === id);
@@ -1076,6 +1127,10 @@ function download(name, text, type = "text/plain;charset=utf-8") {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function action(name, el) {
+  if (name === "quick-model") {
+    navigate("model-chat");
+    render();
+  }
   if (name === "quick-chat" || name === "new-session") {
     navigate("chat");
     render();
