@@ -1,0 +1,14 @@
+{
+  "name": "alpha-gpt-local-replica",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test business.test.js",
+    "check": "node --check app.js && node --check business.js && node --check ui.js && node --check data.js && node --check server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
