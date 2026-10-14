@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const port = Number(process.env.PORT || 4173);
+const host = process.env.HOST || "127.0.0.1";
 const mime = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -56,8 +57,8 @@ const server = http.createServer(async (req, res) => {
     res.end("Bad request");
   }
 });
-server.listen(port, "127.0.0.1", () =>
-  console.log(`Alpha AI 本地复现已启动：http://127.0.0.1:${port}`),
+server.listen(port, host, () =>
+  console.log(`法律服务平台前端已启动：http://${host}:${port}`),
 );
 server.on("error", (error) => {
   console.error(
