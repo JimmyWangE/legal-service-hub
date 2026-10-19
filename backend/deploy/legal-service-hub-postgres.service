@@ -1,0 +1,21 @@
+[Unit]
+Description=Legal Service Hub isolated PostgreSQL instance
+After=network.target
+
+[Service]
+Type=simple
+User=postgres
+Group=postgres
+ExecStart=/usr/bin/postgres -D /var/lib/legal-service-hub/postgres -c listen_addresses=127.0.0.1 -c port=55432 -c unix_socket_directories=/var/lib/legal-service-hub/pgsocket -c max_connections=120 -c shared_buffers=256MB -c password_encryption=scram-sha-256
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/legal-service-hub/postgres /var/lib/legal-service-hub/pgsocket
+UMask=0077
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+groups:
+  - name: legal-service-hub
+    rules:
+      - alert: LegalDependencyUnavailable
+        expr: legal_component_ready == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations: {summary: "法律平台依赖故障，请按component定位"}
+      - alert: LegalAPIHighErrorRate
+        expr: sum(rate(legal_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(legal_http_requests_total[5m])), 0.01) > 0.01
+        for: 3m
+        labels: {severity: critical}
+        annotations: {summary: "法律平台5xx错误率超过1%"}
+      - alert: LegalPaymentInboxBacklog
+        expr: sum(legal_payment_inbox{status=~"pending|retry|manual_review"}) > 20
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "支付收件箱积压，检查Worker与渠道查单"}
+      - alert: LegalAPILatency
+        expr: histogram_quantile(0.95, sum by (le,route) (rate(legal_http_duration_seconds_bucket[5m]))) > 3
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "接口P95耗时超过3秒，请区分模型生成和普通业务接口"}

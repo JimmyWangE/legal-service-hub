@@ -34,17 +34,84 @@ const examples = [
     caption: "明确服务目标 · 连接专业律师",
   },
 ];
-function format(text) {
+
+function consultationTemplate(existingText = "") {
+  const question = existingText.trim();
+  return `【案件类型】：
+
+【我的身份】：
+
+【对方身份及双方关系】：
+
+【事实经过】：
+1.
+2.
+3.
+
+【关键时间和地点】：
+
+【涉及金额或损失】：
+
+【现有证据】：
+1.
+2.
+3.
+
+【已经采取的措施】：
+
+【是否收到通知及期限】：
+
+【希望达到的结果】：
+
+【具体想咨询的问题】：
+1.${question ? ` ${question}` : ""}
+2.
+3.`;
+}
+
+function inline(text) {
   return esc(text)
-    .split("\n")
-    .map((line) =>
-      line.startsWith("## ")
-        ? `<h3>${line.slice(3)}</h3>`
-        : line
-          ? `<p>${line}</p>`
-          : "",
-    )
-    .join("");
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/__(.+?)__/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "");
+}
+
+function format(text) {
+  const output = [];
+  let list = null;
+  const closeList = () => {
+    if (list) output.push(`</${list}>`);
+    list = null;
+  };
+  for (const rawLine of String(text || "").split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      closeList();
+      continue;
+    }
+    const heading = line.match(/^#{1,3}\s+(.+)$/);
+    const bullet = line.match(/^(?:[-*•])\s+(.+)$/);
+    const ordered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (heading) {
+      closeList();
+      output.push(`<h3>${inline(heading[1])}</h3>`);
+    } else if (bullet || ordered) {
+      const type = bullet ? "ul" : "ol";
+      if (list !== type) {
+        closeList();
+        list = type;
+        output.push(`<${list}>`);
+      }
+      output.push(`<li>${inline((bullet || ordered)[1])}</li>`);
+    } else {
+      closeList();
+      output.push(`<p>${inline(line)}</p>`);
+    }
+  }
+  closeList();
+  return output.join("");
 }
 
 export function createModelConsultation({
@@ -63,6 +130,9 @@ export function createModelConsultation({
   let currentRoute;
   let currentChatId = "";
   let continuous = true;
+  let busy = false;
+  let streamingChat = null;
+  let refreshTimer = null;
   function chats() {
     return (getDb().modelChats || []).filter((c) => c.owner === getActor().id);
   }
@@ -81,7 +151,7 @@ export function createModelConsultation({
   }
   function render(route) {
     currentRoute = route;
-    const chat = active();
+    const chat = active() || streamingChat;
     if (chat && chat.id !== currentChatId) {
       continuous = chat.contextEnabled !== false;
       currentChatId = chat.id;
@@ -94,17 +164,19 @@ export function createModelConsultation({
       ${chat ? thread(chat) : `<header class="model-hero"><span class="model-eyebrow">${icon("spark")} 法律模型咨询</span><h1>层层拆解，理清法律问题</h1><p>从一个问题开始，整理事实、发现关注点，为专业法律服务做好准备。</p><button class="model-guide" data-model-action="guide"><span>▶</span> 1分钟了解咨询方式</button></header>`}
       ${composer(d, !!chat)}
       ${!chat ? `<div class="model-examples"><div class="model-divider"><span></span>您可以按照以下场景提问<span></span></div><div class="model-scenario-grid">${examples.map((e, i) => `<button class="model-scenario ${e.tone}" data-model-example="${i}"><div><h2><span>${icon(e.icon)}</span>${e.title}</h2><p>${e.text}</p><small>${e.caption}</small><span class="model-example-arrow">${icon("arrow")}</span></div></button>`).join("")}</div></div>` : ""}
-      <footer class="model-disclaimer">${icon("info")} 当前为本地示例回复，尚未连接真实法律模型。内容不构成法律意见；重要或紧急事项请联系律师。</footer></section>`;
+      ${busy ? '<div class="model-pending" role="status" aria-live="polite">正在连接法律模型，生成完整回答，请稍候…<small>模型生成期间请勿重复提交，网络超时后可以沿用原问题重试。</small></div>' : ""}
+      <footer class="model-disclaimer">${icon("info")} 咨询通过服务端模型生成并保存；不构成法律意见。材料仅保存，尚不参与模型回答；重要或紧急事项请联系律师。</footer></section>`;
   }
   function composer(d, followup) {
-    return `<form id="model-consultation-form" class="model-composer ${followup ? "model-followup" : ""}"><label class="sr-only" for="model-prompt">法律咨询内容</label><textarea id="model-prompt" name="prompt" rows="3" maxlength="8000" placeholder="${followup ? "继续补充事实，或追问您关心的事项…" : "输入法律问题，描述案情或需要帮助的事项…"}">${esc(d.text)}</textarea><div class="model-file-chips">${d.files.map((f, i) => `<span>${icon("attach")}${esc(f.name)}<button type="button" data-model-remove-file="${i}" aria-label="移除材料 ${esc(f.name)}">×</button></span>`).join("")}</div>${d.files.length ? '<p class="model-file-note">材料仅记录文件名和大小，示例回复不会读取或分析文件内容。</p>' : ""}<div class="model-compose-footer"><label class="model-topic">${icon("spark")}<select aria-label="咨询领域" id="model-topic">${topics.map((t) => `<option ${d.topic === t ? "selected" : ""}>${t}</option>`).join("")}</select></label><div class="model-tools"><span class="model-key-hint">Enter发送 · Shift+Enter换行</span><button type="button" class="model-tool" data-model-action="polish" title="完善提问" aria-label="完善提问">${icon("magic")}</button><button type="button" class="model-tool" data-model-action="attach" title="添加材料" aria-label="添加材料">${icon("attach")}</button><button class="model-send" type="submit" aria-label="发送咨询" ${d.text.trim().length < 2 ? "disabled" : ""}>${icon("send")}</button></div></div><input hidden id="model-files" type="file" accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg" multiple></form>`;
+    return `<form id="model-consultation-form" class="model-composer ${followup ? "model-followup" : ""}"><label class="sr-only" for="model-prompt">法律咨询内容</label><textarea id="model-prompt" name="prompt" rows="3" maxlength="8000" placeholder="${followup ? "继续补充事实，或追问您关心的事项…" : "输入法律问题，描述案情或需要帮助的事项…"}">${esc(d.text)}</textarea><div class="model-file-chips">${d.files.map((f, i) => `<span>${icon("attach")}${esc(f.name)}<button type="button" data-model-remove-file="${i}" aria-label="移除材料 ${esc(f.name)}">×</button></span>`).join("")}</div>${d.files.length ? '<p class="model-file-note">材料上传后由服务器受控保存，当前不会读取或分析材料内容。</p>' : ""}<div class="model-compose-footer"><label class="model-topic">${icon("spark")}<select aria-label="咨询领域" id="model-topic">${topics.map((t) => `<option ${d.topic === t ? "selected" : ""}>${t}</option>`).join("")}</select></label><div class="model-tools"><span class="model-key-hint">Enter发送 · Shift+Enter换行</span><button type="button" class="model-tool" data-model-action="polish" title="完善提问" aria-label="完善提问">${icon("magic")}</button><button type="button" class="model-tool" data-model-action="attach" title="添加材料" aria-label="添加材料">${icon("attach")}</button><button class="model-send" type="submit" aria-label="${busy ? "正在生成回答" : "发送咨询"}" title="${busy ? "正在生成回答" : "发送咨询"}" ${busy || d.text.trim().length < 2 ? "disabled" : ""}>${busy ? '<span class="model-send-loading" aria-hidden="true"></span>' : icon("send")}</button></div></div><input hidden id="model-files" type="file" accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg" multiple></form>`;
   }
   function thread(chat) {
-    return `<div class="model-thread-heading"><div><span>${esc(chat.topic)} · ${date(chat.created)}</span><h1>${esc(chat.title)}</h1></div><button class="btn" data-model-action="export">${icon("download")} 导出咨询</button></div><div class="model-messages" aria-label="咨询对话">${chat.messages.map((m, i) => (m.role === "user" ? `<article class="model-message model-user" aria-label="我的提问"><div><p>${esc(m.text)}</p>${m.attachments?.length ? `<small>${icon("attach")} ${m.attachments.map((f) => esc(f.name)).join("、")}</small>` : ""}</div></article>` : `<article class="model-message model-assistant" aria-label="法律助手示例回复"><span class="model-assistant-avatar">${icon("spark")}</span><div><div class="model-answer-label">法律助手 <span>本地示例</span></div>${m.risk ? `<div class="model-urgent">${icon("review")} 检测到紧急事项关键词，请优先联系人工律师核对。<a href="#/lawyers">找律师 ${icon("arrow")}</a></div>` : ""}<div class="model-answer-content">${format(m.text)}</div><div class="model-answer-actions"><button data-model-copy="${i}" title="复制回复">${icon("copy")} 复制</button><button data-model-feedback="有用" data-index="${i}" class="${(chat.feedbackByMessage?.[i] || chat.feedback) === "有用" ? "selected" : ""}">${icon("thumb")} 有用</button><button data-model-feedback="无用" data-index="${i}" class="${(chat.feedbackByMessage?.[i] || chat.feedback) === "无用" ? "selected" : ""}">需要改进</button></div></div></article>`)).join("")}</div><div class="model-conversion"><div>${icon("lawyer")}<span>需要律师审阅材料或起草文书？</span></div><button class="btn primary" data-model-action="request">转为服务需求 ${icon("arrow")}</button><a href="#/lawyers" class="btn">联系律师</a></div>`;
+    return `<div class="model-thread-heading"><div><span>${esc(chat.topic)} · ${date(chat.created)}</span><h1>${esc(chat.title)}</h1></div>${!busy ? `<button class="btn" data-model-action="export">${icon("download")} 导出咨询</button>` : ""}</div><div class="model-messages" aria-label="咨询对话">${chat.messages.map((m, i) => (m.role === "user" ? `<article class="model-message model-user" aria-label="我的提问"><div><p>${esc(m.text)}</p>${m.attachments?.length ? `<small>${icon("attach")} ${m.attachments.map((f) => esc(f.name)).join("、")}</small>` : ""}</div></article>` : `<article class="model-message model-assistant ${m.streaming ? "model-message-streaming" : m.incomplete ? "model-message-incomplete" : ""}" aria-label="法律助手回复"><span class="model-assistant-avatar">${icon("spark")}</span><div><div class="model-answer-label">法律助手 <span>${m.streaming ? "正在生成" : m.incomplete ? "生成未完成" : m.source === "demo" ? "测试模型" : m.source === "legacy" ? "历史记录（来源未核验）" : "服务端模型"}</span></div>${m.risk ? `<div class="model-urgent">${icon("review")} 检测到紧急事项关键词，请优先联系人工律师核对。<a href="#/lawyers">找律师 ${icon("arrow")}</a></div>` : ""}<div class="model-answer-content">${format(m.text)}${m.streaming ? '<span class="model-streaming-cursor" aria-hidden="true"></span>' : ""}</div>${m.incomplete ? '<div class="model-answer-incomplete">连接中断，当前内容未保存；保留问题后可以重新发送。</div>' : ""}${m.streaming || m.incomplete ? "" : `<div class="model-answer-actions"><button data-model-copy="${i}" title="复制回复">${icon("copy")} 复制</button><button data-model-feedback="有用" data-index="${i}" class="${(chat.feedbackByMessage?.[i] || chat.feedback) === "有用" ? "selected" : ""}">${icon("thumb")} 有用</button><button data-model-feedback="无用" data-index="${i}" class="${(chat.feedbackByMessage?.[i] || chat.feedback) === "无用" ? "selected" : ""}">需要改进</button></div>`}</div></article>`)).join("")}</div>${busy ? "" : `<div class="model-conversion"><div>${icon("lawyer")}<span>需要律师审阅材料或起草文书？</span></div><button class="btn primary" data-model-action="request">转为服务需求 ${icon("arrow")}</button><a href="#/lawyers" class="btn">联系律师</a></div>`}`;
   }
   function bind(root) {
     if (getActor().role !== "client" || !root.querySelector(".legal-model"))
       return;
+    if (busy) root.querySelectorAll("textarea, select, .model-send, [data-model-action=attach]").forEach((element) => { element.disabled = true; });
     root.querySelectorAll("[data-model-feedback]").forEach((el) => {
       const chat = active();
       const value = chat?.feedbackByMessage
@@ -130,7 +202,7 @@ export function createModelConsultation({
     root.querySelector("#model-prompt")?.addEventListener("input", (e) => {
       draft().text = e.target.value;
       root.querySelector(".model-send").disabled =
-        e.target.value.trim().length < 2;
+        busy || e.target.value.trim().length < 2;
     });
     root.querySelector("#model-prompt")?.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
@@ -145,8 +217,8 @@ export function createModelConsultation({
       continuous = e.target.checked;
       notify(
         continuous
-          ? "后续示例回复参考当前会话中的提问"
-          : "后续示例回复仅参考本次提问",
+          ? "后续回复参考当前会话中的提问"
+          : "后续回复仅参考本次提问",
       );
     });
     root
@@ -168,7 +240,7 @@ export function createModelConsultation({
         notify("单次咨询最多添加8份材料");
         return;
       }
-      draft().files.push(...files.map((f) => ({ name: f.name, size: f.size })));
+      draft().files.push(...files.map((file) => ({ name: file.name, size: file.size, file })));
       refresh();
     });
     root.querySelectorAll("[data-model-remove-file]").forEach((el) =>
@@ -183,16 +255,16 @@ export function createModelConsultation({
           await navigator.clipboard.writeText(
             active().messages[Number(el.dataset.modelCopy)].text,
           );
-          notify("已复制示例回复");
+          notify("已复制回复");
         } catch {
           notify("浏览器暂不支持复制，请选择文字后复制");
         }
       }),
     );
     root.querySelectorAll("[data-model-feedback]").forEach((el) =>
-      el.addEventListener("click", () => {
+      el.addEventListener("click", async () => {
         try {
-          commit("model-feedback", {
+          await commit("model-feedback", {
             id: active().id,
             value: el.dataset.modelFeedback,
             index: Number(el.dataset.index),
@@ -208,21 +280,35 @@ export function createModelConsultation({
   function focusPrompt() {
     document.querySelector("#model-prompt")?.focus();
   }
-  function send() {
+  async function send() {
+    if (busy) return;
     const d = draft();
     if (d.text.trim().length < 2) {
       notify("请先输入具体的法律问题");
       return;
     }
+    busy = true;
+    streamingChat = null;
+    refresh();
     try {
       const chat = active();
-      const result = commit(chat ? "model-message" : "model-chat", {
-        id: chat?.id,
+      const result = await commit(chat || d.conversationId ? "model-message" : "model-chat", {
+        id: chat?.id || d.conversationId,
         prompt: d.text,
         topic: d.topic,
         attachments: d.files,
         contextEnabled: continuous,
+        onStart: (id) => {
+          streamingChat = { id, topic: d.topic, title: d.text.slice(0, 80), created: new Date().toISOString(), messages: [{ role: "user", text: d.text, attachments: d.files.map((file) => ({ name: file.name, size: file.size })) }, { role: "assistant", text: "", source: "model", streaming: true }] };
+          refresh();
+        },
+        onChunk: (chunk) => {
+          if (!streamingChat) return;
+          streamingChat.messages[1].text += chunk;
+          if (!refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = null; refresh(); }, 60);
+        },
       });
+      streamingChat = null;
       drafts.delete(currentRoute.id || "new");
       navigate("model-chat", result.id);
       refresh();
@@ -232,7 +318,15 @@ export function createModelConsultation({
           ?.scrollIntoView({ behavior: "smooth", block: "end" }),
       );
     } catch (error) {
+      if (error.consultationId) d.conversationId = error.consultationId;
+      if (streamingChat) {
+        streamingChat.messages[1].streaming = false;
+        streamingChat.messages[1].incomplete = true;
+      }
       notify(error.message);
+    } finally {
+      busy = false;
+      refresh();
     }
   }
   function action(name) {
@@ -245,7 +339,7 @@ export function createModelConsultation({
     if (name === "attach") document.querySelector("#model-files")?.click();
     if (name === "polish") {
       const d = draft();
-      d.text = `事实经过：\n${d.text.trim()}\n\n涉及的时间与地区：\n\n希望解决的问题：`;
+      d.text = consultationTemplate(d.text);
       refresh();
       focusPrompt();
     }
@@ -253,7 +347,7 @@ export function createModelConsultation({
     if (name === "guide")
       modal(
         "如何使用法律模型咨询",
-        '<div class="model-guide-content"><b>1. 描述问题</b><p>可以直接输入案情，也可以点击场景卡片带入示例。</p><b>2. 继续补充</b><p>选择咨询领域、补充关键事实，支持连续追问与本地记录回看。</p><b>3. 联系律师</b><p>需要进一步服务时，先核对摘要，再确认公开范围并发布服务需求。</p><p class="muted">当前为界面与流程演示，尚未接入真实模型。</p></div>',
+        '<div class="model-guide-content"><b>1. 描述问题</b><p>可以直接输入案情，也可以点击场景卡片带入示例。</p><b>2. 继续补充</b><p>选择咨询领域、补充关键事实，支持连续追问与服务端记录回看。</p><b>3. 联系律师</b><p>需要进一步服务时，先核对摘要，再确认公开范围并发布服务需求。</p><p class="muted">模型由服务器接入，回答自动落库；上传材料当前仅保存，不参与回答。</p></div>',
       );
     if (name === "request" && active()) createRequest(active().id);
     if (name === "export" && active()) {
@@ -263,7 +357,7 @@ export function createModelConsultation({
         chat.messages
           .map(
             (m) =>
-              `${m.role === "user" ? "我的提问" : "法律助手（本地示例）"}\n${m.text}${m.attachments?.length ? "\n材料：" + m.attachments.map((f) => f.name).join("、") : ""}`,
+              `${m.role === "user" ? "我的提问" : "法律助手"}\n${m.text}${m.attachments?.length ? "\n材料：" + m.attachments.map((f) => f.name).join("、") : ""}`,
           )
           .join("\n\n"),
       );
@@ -303,5 +397,5 @@ export function createModelConsultation({
     update();
     search.focus();
   }
-  return { render, bind };
+  return { render, bind, clear: () => { drafts.clear(); currentChatId = ""; } };
 }

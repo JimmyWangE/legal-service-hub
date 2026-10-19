@@ -1,0 +1,20 @@
+[Unit]
+Description=Legal Service Hub isolated Redis instance
+After=network.target
+
+[Service]
+Type=simple
+User=legal-redis
+Group=legal-redis
+ExecStart=/usr/bin/redis-server /etc/legal-service-hub-redis/redis.conf
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/legal-service-hub/redis
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

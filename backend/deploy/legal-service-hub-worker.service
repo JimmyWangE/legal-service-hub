@@ -1,0 +1,27 @@
+[Unit]
+Description=Legal Service Hub durable payment worker
+After=network.target legal-service-hub-postgres.service legal-service-hub-redis.service
+Wants=legal-service-hub-postgres.service legal-service-hub-redis.service
+
+[Service]
+Type=simple
+User=legal-api
+Group=legal-api
+WorkingDirectory=/home/lawsft/legal-service-hub
+EnvironmentFile=/etc/legal-service-hub/api.env
+Environment=PYTHONPATH=/home/lawsft/legal-service-hub/backend
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/usr/bin/test -r /etc/legal-service-hub/secrets/model-api-key
+ExecStart=/home/lawsft/legal-service-hub/backend/.venv/bin/python -m app.worker
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/legal-service-hub/uploads
+UMask=0027
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
