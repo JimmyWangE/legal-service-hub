@@ -1,0 +1,96 @@
+x-backend: &backend
+  build: .
+  read_only: true
+  restart: unless-stopped
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+    - /app/data/metrics:size=32m,uid=10001,gid=10001,mode=0750
+  volumes:
+    - uploads:/app/data/uploads
+    - ${MODEL_KEY_HOST_FILE:?set_readable_model_key_file}:/run/secrets/model-api-key:ro
+
+services:
+  api:
+    <<: *backend
+    env_file: ["${API_ENV_FILE:?set_private_api_environment_file}"]
+    environment:
+      APP_ENV: production
+      MODEL_API_KEY_FILE: /run/secrets/model-api-key
+      UPLOAD_DIR: /app/data/uploads
+      PROMETHEUS_MULTIPROC_DIR: /app/data/metrics
+      SEED_DEMO_DATA: "false"
+      PAYMENT_PROVIDER: disabled
+      PAYMENT_STUB_ENABLED: "false"
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+  worker:
+    <<: *backend
+    env_file: ["${API_ENV_FILE:?set_private_api_environment_file}"]
+    environment:
+      APP_ENV: production
+      MODEL_API_KEY_FILE: /run/secrets/model-api-key
+      UPLOAD_DIR: /app/data/uploads
+      SEED_DEMO_DATA: "false"
+      PAYMENT_PROVIDER: disabled
+      PAYMENT_STUB_ENABLED: "false"
+    command: [python, -m, app.worker]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+  migrate:
+    <<: *backend
+    restart: "no"
+    env_file: ["${MIGRATION_ENV_FILE:?set_private_owner_environment_file}"]
+    environment:
+      APP_ENV: production
+      MODEL_API_KEY_FILE: /run/secrets/model-api-key
+      UPLOAD_DIR: /app/data/uploads
+      SEED_DEMO_DATA: "false"
+      PAYMENT_PROVIDER: disabled
+      PAYMENT_STUB_ENABLED: "false"
+    command: [alembic, upgrade, head]
+    depends_on:
+      postgres: {condition: service_healthy}
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: legal_service
+      POSTGRES_USER: legal_owner
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set_strong_owner_password}
+      LEGAL_RUNTIME_PASSWORD: ${POSTGRES_API_PASSWORD:?set_separate_runtime_password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/docker-db-init.sh:/docker-entrypoint-initdb.d/10-legal.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U legal_owner -d legal_service]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: [redis-server, /etc/redis/redis.conf]
+    volumes:
+      - redis-data:/data
+      - ${REDIS_CONFIG_FILE:?set_private_redis_acl_config}:/etc/redis/redis.conf:ro
+      - ${REDIS_PASSWORD_FILE:?set_redis_auth_healthcheck_secret}:/run/secrets/redis-password:ro
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$(cat /run/secrets/redis-password)" redis-cli --user legal_api ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:
+  uploads:

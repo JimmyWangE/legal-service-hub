@@ -1,0 +1,29 @@
+[Unit]
+Description=Legal Service Hub Python API
+After=network.target legal-service-hub-postgres.service legal-service-hub-redis.service
+Wants=legal-service-hub-postgres.service legal-service-hub-redis.service
+
+[Service]
+Type=simple
+User=legal-api
+Group=legal-api
+WorkingDirectory=/home/lawsft/legal-service-hub
+EnvironmentFile=/etc/legal-service-hub/api.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/usr/bin/test -r /etc/legal-service-hub/secrets/model-api-key
+ExecStartPre=/usr/bin/test -s /etc/legal-service-hub/secrets/model-api-key
+ExecStartPre=/home/lawsft/legal-service-hub/backend/.venv/bin/python /home/lawsft/legal-service-hub/backend/scripts/prepare-metrics.py
+ExecStart=/home/lawsft/legal-service-hub/backend/.venv/bin/uvicorn --app-dir /home/lawsft/legal-service-hub/backend app.main:app --host 127.0.0.1 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/legal-service-hub/uploads /var/lib/legal-service-hub/metrics
+UMask=0027
+LimitNOFILE=65536
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

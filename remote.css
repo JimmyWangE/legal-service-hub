@@ -1,0 +1,67 @@
+.remote-auth { max-width: 510px; margin: 8vh auto; padding: 20px; }
+.remote-auth h1 { margin-top: 24px; }
+.remote-auth .field { margin: 18px 0; }
+.remote-top-actions { display: flex; align-items: center; gap: 12px; }
+.remote-record { margin: 18px 0; padding: 18px 0; border-bottom: 1px solid #eee; }
+.remote-warning, .form-error { color: #a03c20; white-space: pre-wrap; }
+.remote-warning { padding: 16px; background: #fff3e7; border-radius: 8px; }
+.remote-payment-qr { display: block; width: 250px; max-width: 100%; margin: 20px 0; }
+.simulation-payment { max-width: 360px; margin: 18px 0; padding: 20px; border: 1px solid #dfe7f1; border-radius: 14px; background: #f8fbff; text-align: center; }
+.simulation-payment-title { margin: 0; color: #45617d; font-weight: 700; }
+.simulation-payment-amount { margin: 8px 0; color: #173b61; font-size: 32px; font-weight: 800; }
+.simulation-payment .remote-payment-qr { margin: 18px auto; background: #fff; }
+.data-list dd { white-space: pre-wrap; word-break: break-word; }
+.surface { margin-bottom: 20px; }
+.platform-nav { overflow-y: auto; }
+.platform-nav a { flex-shrink: 0; }
+input[type=number] { appearance: textfield; }
+@media (max-width: 700px) { .remote-top-actions { flex-wrap: wrap; gap: 6px; } .remote-auth { margin: 20px auto; } }
+.model-pending {
+  margin: 14px auto 0;
+  max-width: 760px;
+  padding: 12px 16px;
+  border: 1px solid rgba(73, 92, 117, .18);
+  border-radius: 14px;
+  color: #48566b;
+  background: #f7f9fc;
+  text-align: center;
+}
+
+.model-pending small {
+  display: block;
+  margin-top: 4px;
+  color: #7b8798;
+}
+
+.model-send-loading {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: model-spin .7s linear infinite;
+}
+
+.model-streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 4px;
+  vertical-align: -2px;
+  background: currentColor;
+  animation: model-blink .9s steps(1) infinite;
+}
+
+.model-answer-incomplete {
+  margin-top: 10px;
+  color: #a15c16;
+  font-size: 13px;
+}
+
+.model-message-streaming .model-answer-content {
+  min-height: 24px;
+}
+
+@keyframes model-spin { to { transform: rotate(360deg); } }
+@keyframes model-blink { 50% { opacity: 0; } }
