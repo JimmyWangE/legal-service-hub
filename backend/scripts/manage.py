@@ -153,7 +153,7 @@ elif options.action == "restore-check":
         result = subprocess.run(["pg_restore", *arguments, "-d", name, "--no-owner", "--exit-on-error", str(path)], env=process_env, capture_output=True)
         if result.returncode:
             raise RuntimeError("备份恢复验证失败（错误已脱敏）")
-        assert admin_sql("SELECT version_num FROM alembic_version", name) == "20261019_03"
+        assert admin_sql("SELECT version_num FROM alembic_version", name) == "20261020_05"
         print("备份摘要及隔离数据库恢复验证通过")
     finally:
         admin_sql(f"DROP DATABASE {name}")

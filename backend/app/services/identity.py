@@ -1,3 +1,5 @@
+import base64
+import binascii
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -128,3 +130,22 @@ def freeze_lawyer(db: Session, actor: User, lawyer_id: str, reason: str, request
     notify(db, lawyer_id, "接单权限已冻结", reason, "lawyer", lawyer_id)
     commit_event(db, "lawyer.frozen", "lawyer", lawyer_id, {"reason": reason})
     return profile
+
+
+AVATAR_PREFIX = re.compile(r"^data:image/(png|jpeg|webp);base64,")
+AVATAR_MAX_BYTES = 200 * 1024
+
+
+def update_avatar(db: Session, user: User, data_url: str | None) -> User:
+    if data_url:
+        match = AVATAR_PREFIX.match(data_url)
+        require(match is not None, "头像仅支持 PNG、JPEG 或 WebP 图片", 422, "invalid_avatar")
+        try:
+            raw = base64.b64decode(data_url[match.end():], validate=True)
+        except (binascii.Error, ValueError):
+            raise DomainError("头像图片数据无效", 422, "invalid_avatar")
+        require(0 < len(raw) <= AVATAR_MAX_BYTES, "头像图片不能超过200KB", 422, "invalid_avatar")
+    user.avatar_data = data_url or None
+    record_audit(db, user, "user.avatar.updated", "user", user.id, {"removed": not data_url})
+    db.flush()
+    return user

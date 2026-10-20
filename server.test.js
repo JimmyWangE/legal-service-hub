@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import http from "node:http";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { publicFiles } from "./static-manifest.mjs";
 
 test("静态白名单阻止源码泄露，同源代理保留认证与原始请求体", async () => {
   const upstream = http.createServer(async (request, response) => {
@@ -26,7 +27,7 @@ test("静态白名单阻止源码泄露，同源代理保留认证与原始请�
     }
     assert.equal(started, true);
     for (const endpoint of ["/backend/app/main.py", "/backend/data/legal_service.db", "/README.md", "/business.js", "/package.json"]) assert.equal((await fetch(base + endpoint)).status, 404);
-    assert.equal((await fetch(base + "/app.js")).status, 200);
+    for (const file of publicFiles) assert.equal((await fetch(`${base}/${file}`)).status, 200, file);
     const raw = '{ "原始": "通知字节", "amount": "19.90" }';
     const response = await fetch(base + "/api/v1/payments/webhooks/test?query=1", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer proxy-token", "X-Forwarded-For": "1.2.3.4" }, body: raw });
     const result = await response.json();

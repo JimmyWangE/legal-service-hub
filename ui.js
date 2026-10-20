@@ -57,6 +57,16 @@ const paths = {
   check: '<path d="m4 12 5 5L20 6"/>',
   download: '<path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v12H4Z"/><circle cx="12" cy="13" r="4"/>',
+  logout: '<path d="M10 4H4v16h6M15 8l4 4-4 4M19 12H9"/>',
+  shield: '<path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6Z"/>',
+  message: '<path d="M4 5h16v11H9l-5 4Z"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  up: '<path d="m6 15 6-6 6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
 };
 export const icon = (name) =>
   `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.doc}</svg>`;
@@ -69,3 +79,6 @@ export const empty = (text = "暂无记录", action = "") =>
 export const field = (label, name, value = "", opts = {}) =>
   `<label class="field ${opts.wide ? "wide" : ""}"><span>${label}${opts.required ? " <b>*</b>" : ""}</span>${opts.options ? `<select name="${name}" ${opts.required ? "required" : ""}>${opts.options.map((v) => `<option value="${esc(v)}" ${value === v ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>` : opts.textarea ? `<textarea name="${name}" rows="${opts.rows || 4}" ${opts.required ? "required" : ""} placeholder="${esc(opts.placeholder || "")}">${esc(value)}</textarea>` : `<input name="${name}" type="${opts.type || "text"}" ${opts.type === "number" ? `step="${esc(opts.step ?? "any")}"` : ""} value="${esc(value)}" ${opts.required ? "required" : ""} ${opts.min !== undefined ? `min="${opts.min}"` : ""} ${opts.max !== undefined ? `max="${opts.max}"` : ""} placeholder="${esc(opts.placeholder || "")}">`}${opts.hint ? `<small>${opts.hint}</small>` : ""}</label>`;
 export const formData = (form) => Object.fromEntries(new FormData(form));
+export const initials = (name = "") => (String(name).trim()[0] || "用").toUpperCase();
+export const avatar = (person = {}, size = "") =>
+  `<span class="avatar ${size}" aria-hidden="true">${person?.avatar && /^data:image\/(png|jpeg|webp);base64,/.test(person.avatar) ? `<img src="${esc(person.avatar)}" alt="">` : esc(initials(person?.name))}</span>`;

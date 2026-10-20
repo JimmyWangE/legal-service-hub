@@ -24,6 +24,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     token_version: Mapped[int] = mapped_column(Integer, default=0)
+    avatar_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     role_grants: Mapped[list["UserRole"]] = relationship(lazy="selectin", cascade="all, delete-orphan")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -245,6 +246,30 @@ class AccessGrant(Base):
     can_edit: Mapped[bool] = mapped_column(Boolean, default=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (UniqueConstraint("document_id", "user_id", name="uq_document_access"),)
+
+
+class ChatConversation(Base):
+    __tablename__ = "chat_conversations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    lawyer_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    order_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    client_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lawyer_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint("client_id", "lawyer_id", name="uq_chat_pair"),)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("chat_conversations.id"), index=True)
+    sender_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    text: Mapped[str] = mapped_column(Text)
+    attachment_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (Index("ix_chat_messages_conversation_created", "conversation_id", "created_at"),)
 
 
 class Delivery(Base):

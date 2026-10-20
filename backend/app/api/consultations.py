@@ -51,6 +51,12 @@ def message_history(consultation_id: str, before_sequence: int | None = Query(No
     return [{"id": item.id, "role": item.role, "text": item.text, "sequence": item.sequence, "source": item.source, "created_at": item.created_at} for item in query.order_by(ConsultationMessage.sequence.desc()).limit(limit).all()[::-1]]
 
 
+@router.delete("/{consultation_id}")
+def remove(consultation_id: str, db: Session = Depends(get_db), user=Depends(current_user), context=Depends(request_context)):
+    consultation.delete(db, consultation.get_owned(db, consultation_id, user.id), user, context["request_id"])
+    return {"id": consultation_id, "deleted": True}
+
+
 @router.post("/{consultation_id}/messages", dependencies=[Depends(require_model_ready)])
 def message(consultation_id: str, payload: MessageCreate, db: Session = Depends(get_db), user=Depends(current_user), context=Depends(request_context)):
     current = consultation.get_owned(db, consultation_id, user.id)

@@ -6,7 +6,7 @@ from threading import BoundedSemaphore
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.api.serializers import case_out, order_out, payment_out
+from app.api.serializers import case_out, order_out, payment_out, user_briefs
 from app.core.database import get_db
 from app.core.deps import current_user, idempotency_key, request_context
 from app.core.errors import require
@@ -27,12 +27,15 @@ def list_orders(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=10
     query = db.query(Order)
     if not user.has_role("operator"):
         query = query.filter(or_(Order.client_id == user.id, Order.lawyer_id == user.id))
-    return [order_out(item) for item in query.order_by(Order.created_at.desc()).offset(offset).limit(limit).all()]
+    items = query.order_by(Order.created_at.desc()).offset(offset).limit(limit).all()
+    people = user_briefs(db, [person for item in items for person in (item.client_id, item.lawyer_id)])
+    return [order_out(item, people) for item in items]
 
 
 @router.get("/orders/{order_id}")
 def get_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    return order_out(trade.get_order(db, user, order_id))
+    order = trade.get_order(db, user, order_id)
+    return order_out(order, user_briefs(db, [order.client_id, order.lawyer_id]))
 
 
 @router.post("/orders/{order_id}/payments")

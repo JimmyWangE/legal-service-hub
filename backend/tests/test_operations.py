@@ -334,8 +334,8 @@ def test_same_consultation_concurrent_updates_return_explicit_conflict(api, monk
 def test_fresh_and_legacy_migrations_preserve_identity_and_freeze_unverified_lawyer(tmp_path):
     import os
     repository = Path(__file__).resolve().parents[2]
-    added = {"health_probes", "payment_webhook_inbox", "email_verifications", "registration_challenges", "lawyer_applications", "user_roles", "lawyer_review_records", "payment_transactions", "refunds"}
-    removed = {"users": {"email_verified", "token_version"}, "lawyer_profiles": {"approved_application_id"}, "consultations": {"version"}, "consultation_messages": {"sequence", "source"}, "consents": {"snapshot_json"}, "service_requests": {"consent_id"}, "after_sales_cases": {"previous_order_status", "previous_settlement_status"}, "payments": {"merchant_id", "transaction_id", "client_params", "expires_at", "refunded", "attempts", "next_attempt_at"}}
+    added = {"health_probes", "payment_webhook_inbox", "email_verifications", "registration_challenges", "lawyer_applications", "user_roles", "lawyer_review_records", "payment_transactions", "refunds", "chat_conversations", "chat_messages"}
+    removed = {"users": {"email_verified", "token_version", "avatar_data"}, "lawyer_profiles": {"approved_application_id"}, "consultations": {"version"}, "consultation_messages": {"sequence", "source"}, "consents": {"snapshot_json"}, "service_requests": {"consent_id"}, "after_sales_cases": {"previous_order_status", "previous_settlement_status"}, "payments": {"merchant_id", "transaction_id", "client_params", "expires_at", "refunded", "attempts", "next_attempt_at"}}
     legacy = MetaData()
     for table in Base.metadata.sorted_tables:
         if table.name not in added:
@@ -355,7 +355,7 @@ def test_fresh_and_legacy_migrations_preserve_identity_and_freeze_unverified_law
         assert connection.execute(text("SELECT role FROM user_roles WHERE user_id = 'historic-lawyer'")).scalar() == "client"
         assert connection.execute(text("SELECT status FROM lawyer_profiles WHERE user_id = 'historic-lawyer'")).scalar() == "frozen"
         assert not connection.execute(text("SELECT is_active FROM users WHERE id = 'C1'")).scalar()
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261019_03"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261020_05"
     legacy_engine.dispose()
     process_env["DATABASE_URL"] = f"sqlite:///{tmp_path / 'fresh.db'}"
     result = subprocess.run([sys.executable, "-m", "alembic", "-c", "backend/alembic.ini", "upgrade", "head"], cwd=repository, env=process_env, capture_output=True, text=True)

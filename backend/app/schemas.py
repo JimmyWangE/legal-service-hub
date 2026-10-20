@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class APIModel(BaseModel):
@@ -45,6 +45,7 @@ class UserOut(APIModel):
     roles: list[str] = Field(default_factory=list)
     email_verified: bool = False
     org_id: str | None = None
+    avatar: str | None = None
 
 
 class RegistrationChallengeOut(BaseModel):
@@ -192,6 +193,34 @@ class PasswordChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     old_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=12, max_length=128)
+
+
+class AvatarUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    data_url: str | None = Field(default=None, max_length=300_000)
+
+
+class ChatCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    peer_id: str = Field(min_length=1, max_length=36)
+    order_id: str | None = Field(default=None, max_length=36)
+
+
+class ChatMessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(default="", max_length=2000)
+    file_id: str | None = Field(default=None, max_length=36)
+
+    @field_validator("text")
+    @classmethod
+    def strip_text(cls, value):
+        return value.strip()
+
+    @model_validator(mode="after")
+    def text_or_file(self):
+        if not self.text and not self.file_id:
+            raise ValueError("消息内容和文件不能同时为空")
+        return self
 
 
 class NotificationOut(APIModel):

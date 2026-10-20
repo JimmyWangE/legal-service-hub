@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { apiRequest, mutate, streamRequest } from "./api-client.js";
+import { apiRequest, mutate, streamRequest, subscribe } from "./api-client.js";
 import { getAccessToken, setSession } from "./auth-state.js";
 
 test("API 请求携带内存凭证，金额保持字符串", async () => {
@@ -81,5 +81,26 @@ test("流式咨询按事件增量回调，并返回最终落库结果", async ()
     assert.deepEqual(events.map(([name]) => name), ["start", "chunk", "chunk", "done"]);
     assert.equal(events[1][1].text + events[2][1].text, "第一段第二段");
     assert.equal(result.id, "c1");
+  } finally { globalThis.fetch = original; }
+});
+
+test("事件订阅解析帧、携带凭证，正常结束后重连直至取消", async () => {
+  setSession({ access_token: "sub-token", user: { id: "unit" } });
+  const original = globalThis.fetch;
+  const controller = new AbortController();
+  const events = [];
+  let calls = 0;
+  try {
+    globalThis.fetch = async (endpoint, options) => {
+      calls += 1;
+      assert.equal(endpoint, `/api/v1/chats/stream?since=c${calls}`);
+      assert.equal(options.headers.Authorization, "Bearer sub-token");
+      return new Response(`event: ready\ndata: {"cursor":"c${calls}"}\n\nevent: message\ndata: {"id":"m${calls}"}\n\n`, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    };
+    await subscribe(() => `/chats/stream?since=c${calls + 1}`, { signal: controller.signal, onEvent: (name, payload) => { events.push([name, payload.id || payload.cursor]); if (events.length === 4) controller.abort(); } });
+    assert.deepEqual(events, [["ready", "c1"], ["message", "m1"], ["ready", "c2"], ["message", "m2"]]);
+    globalThis.fetch = async () => new Response("{}", { status: 401 });
+    await subscribe("/chats/stream", {});
+    assert.equal(getAccessToken(), "");
   } finally { globalThis.fetch = original; }
 });

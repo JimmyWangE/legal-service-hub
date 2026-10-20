@@ -88,6 +88,64 @@ function responseError(response, payload, requestId, token) {
   return new ApiError(validationMessage(detail) || messages[response.status] || "请求失败，请稍后重试", response.status, detail?.code || "request_failed", requestId);
 }
 
+async function readEventStream(response, requestId, onFrame) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const dispatch = async (raw) => {
+    const lines = raw.split(/\r?\n/);
+    const eventName = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() || "message";
+    const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+    if (!data) return;
+    let payload;
+    try { payload = JSON.parse(data); } catch { throw new ApiError("流响应格式异常，请稍后重试", 502, "invalid_stream", requestId); }
+    await onFrame(eventName, payload);
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    let separator;
+    while ((separator = buffer.indexOf("\n\n")) >= 0) {
+      const raw = buffer.slice(0, separator);
+      buffer = buffer.slice(separator + 2);
+      await dispatch(raw);
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) await dispatch(buffer);
+}
+
+const wait = (ms, signal) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+});
+
+// 订阅服务端事件流：连接正常结束立即重连，异常时指数退避（1s → 15s），直至 signal 取消或凭证失效。
+export async function subscribe(endpoint, { onEvent, onStatus, signal } = {}) {
+  let delay = 1000;
+  while (!signal?.aborted) {
+    const token = getAccessToken();
+    if (!token) return;
+    try {
+      const response = await fetch(`/api/v1${typeof endpoint === "function" ? endpoint() : endpoint}`, { headers: { Accept: "text/event-stream", Authorization: `Bearer ${token}` }, credentials: "same-origin", signal, cache: "no-store" });
+      const requestId = response.headers.get("X-Request-Id") || "";
+      if (!response.ok) {
+        let payload = null;
+        try { payload = JSON.parse(await response.text()); } catch { payload = null; }
+        throw responseError(response, payload, requestId, token);
+      }
+      onStatus?.("open");
+      delay = 1000;
+      await readEventStream(response, requestId, async (eventName, payload) => onEvent?.(eventName, payload));
+    } catch (error) {
+      if (signal?.aborted || error.status === 401 || error.status === 403) return;
+      onStatus?.("retrying");
+      await wait(delay, signal);
+      delay = Math.min(delay * 2, 15000);
+    }
+  }
+}
+
 export async function streamRequest(endpoint, body, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 200000);
@@ -108,33 +166,12 @@ export async function streamRequest(endpoint, body, options = {}) {
     }
     if (contentType.includes("application/json")) return await response.json();
     if (!response.body) throw new ApiError("浏览器不支持流式响应，请刷新后重试", 0, "stream_unsupported", requestId);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let result = null;
-    const dispatch = async (raw) => {
-      const lines = raw.split(/\r?\n/);
-      const eventName = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() || "message";
-      const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
-      if (!data) return;
-      let payload;
-      try { payload = JSON.parse(data); } catch { throw new ApiError("模型流响应格式异常，请稍后重试", 502, "invalid_stream", requestId); }
+    await readEventStream(response, requestId, async (eventName, payload) => {
       if (eventName === "error") throw new ApiError(payload.message || "模型服务暂时不可用，请稍后重试", 503, payload.code || "model_unavailable", requestId);
       if (eventName === "done") result = payload;
       if (options.onEvent) await options.onEvent(eventName, payload);
-    };
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      let separator;
-      while ((separator = buffer.indexOf("\n\n")) >= 0) {
-        const raw = buffer.slice(0, separator);
-        buffer = buffer.slice(separator + 2);
-        await dispatch(raw);
-      }
-      if (done) break;
-    }
-    if (buffer.trim()) await dispatch(buffer);
+    });
     if (!result) throw new ApiError("模型响应未正常结束，请刷新咨询记录", 502, "incomplete_stream", requestId);
     return result;
   } catch (error) {
