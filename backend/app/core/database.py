@@ -55,3 +55,10 @@ def init_db() -> None:
     if settings.app_env in {"staging", "production"}:
         return
     Base.metadata.create_all(bind=engine)
+    from sqlalchemy import inspect, text
+
+    # 开发库由 create_all 建表，不会补齐已有表的新列；预发布和生产走 Alembic 迁移。
+    for table, column, definition in (("users", "avatar_data", "TEXT"), ("chat_messages", "attachment_json", "JSON")):
+        if column not in {item["name"] for item in inspect(engine).get_columns(table)}:
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))

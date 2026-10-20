@@ -20,7 +20,14 @@ from app.models import (
 
 
 def user_out(user: User) -> dict:
-    return {"id": user.id, "email": user.email, "name": user.name, "role": user.role, "roles": user.roles, "email_verified": user.email_verified, "org_id": user.org_id}
+    return {"id": user.id, "email": user.email, "name": user.name, "role": user.role, "roles": user.roles, "email_verified": user.email_verified, "org_id": user.org_id, "avatar": user.avatar_data}
+
+
+def user_briefs(db: Session, ids) -> dict:
+    wanted = {item for item in ids if item}
+    if not wanted:
+        return {}
+    return {user.id: {"id": user.id, "name": user.name, "avatar": user.avatar_data} for user in db.query(User).filter(User.id.in_(wanted)).all()}
 
 
 def consultation_out(db: Session, consultation: Consultation) -> dict:
@@ -66,8 +73,9 @@ def quote_out(quote: Quote) -> dict:
     return {"id": quote.id, "request_id": quote.request_id, "lawyer_id": quote.lawyer_id, "scope": quote.scope, "deliverables": quote.deliverables, "price": quote.price, "days": quote.days, "valid_until": quote.valid_until, "status": quote.status, "version": quote.version, "created_at": quote.created_at}
 
 
-def order_out(order: Order) -> dict:
-    return {"id": order.id, "request_id": order.request_id, "quote_id": order.quote_id, "client_id": order.client_id, "lawyer_id": order.lawyer_id, "title": order.title, "scope": order.scope, "price": order.price, "paid": order.paid, "status": order.status, "payment_status": order.payment_status, "settlement_status": order.settlement_status, "version": order.version, "created_at": order.created_at, "updated_at": order.updated_at}
+def order_out(order: Order, people: dict | None = None) -> dict:
+    names = {"client_name": people[order.client_id]["name"] if people and order.client_id in people else None, "lawyer_name": people[order.lawyer_id]["name"] if people and order.lawyer_id in people else None}
+    return {**names, "id": order.id, "request_id": order.request_id, "quote_id": order.quote_id, "client_id": order.client_id, "lawyer_id": order.lawyer_id, "title": order.title, "scope": order.scope, "price": order.price, "paid": order.paid, "status": order.status, "payment_status": order.payment_status, "settlement_status": order.settlement_status, "version": order.version, "created_at": order.created_at, "updated_at": order.updated_at}
 
 
 def payment_out(payment: Payment) -> dict:
@@ -77,7 +85,7 @@ def payment_out(payment: Payment) -> dict:
 def document_out(db: Session, document: Document, include_body: bool = True) -> dict:
     versions = db.query(DocumentVersion).options(defer(DocumentVersion.body)).filter_by(document_id=document.id).order_by(DocumentVersion.number.desc()).limit(50).all()[::-1]
     tasks = db.query(WorkflowTask).filter_by(document_id=document.id).order_by(WorkflowTask.sequence).all()
-    output = {"id": document.id, "order_id": document.order_id, "owner_id": document.owner_id, "title": document.title, "doc_type": document.doc_type, "status": document.status, "current_version": document.current_version, "locked_version": document.locked_version, "members": document.members_json, "created_at": document.created_at, "versions": [{"id": v.id, "number": v.number, "author_id": v.author_id, "body_hash": v.body_hash, "body": v.body if include_body and v.number == document.current_version else None, "created_at": v.created_at} for v in versions], "workflow": [{"id": t.id, "version": t.version_number, "sequence": t.sequence, "assignee_id": t.assignee_id, "status": t.status, "reason": t.reason} for t in tasks]}
+    output = {"id": document.id, "order_id": document.order_id, "owner_id": document.owner_id, "title": document.title, "doc_type": document.doc_type, "status": document.status, "current_version": document.current_version, "locked_version": document.locked_version, "members": document.members_json, "member_profiles": list(user_briefs(db, document.members_json).values()), "created_at": document.created_at, "versions": [{"id": v.id, "number": v.number, "author_id": v.author_id, "body_hash": v.body_hash, "body": v.body if include_body and v.number == document.current_version else None, "created_at": v.created_at} for v in versions], "workflow": [{"id": t.id, "version": t.version_number, "sequence": t.sequence, "assignee_id": t.assignee_id, "status": t.status, "reason": t.reason} for t in tasks]}
     return output
 
 

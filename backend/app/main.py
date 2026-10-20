@@ -11,7 +11,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from app.api import admin, auth, consultations, documents, files, marketplace, notifications, orders
+from app.api import admin, auth, chats, consultations, documents, files, marketplace, notifications, orders
 from app.bootstrap import seed_demo_data
 from app.core.config import get_settings
 from app.core.database import SessionLocal, init_db
@@ -129,6 +129,7 @@ def metrics(request: Request):
 
 
 api_prefix = "/api/v1"
-for router in (auth.router, consultations.router, marketplace.router, orders.router, documents.router, files.router, notifications.router, admin.router):
+for router in (auth.router, chats.router, consultations.router, marketplace.router, orders.router, documents.router, files.router, notifications.router, admin.router):
     app.include_router(router, prefix=api_prefix)
 app.include_router(consultations.stream_router, prefix=api_prefix)
+app.include_router(chats.stream_router, prefix=api_prefix)

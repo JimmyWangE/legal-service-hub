@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import current_user
 from app.core.security import create_access_token
-from app.schemas import LoginRequest, LoginResponse, PasswordChange, RegisterRequest, RegistrationChallengeOut
+from app.schemas import AvatarUpdate, LoginRequest, LoginResponse, PasswordChange, RegisterRequest, RegistrationChallengeOut
 from app.services.identity import create_registration_challenge, login, register
 from app.api.serializers import user_out
 
@@ -54,3 +54,11 @@ def change_password(payload: PasswordChange, db: Session = Depends(get_db), user
     user.token_version += 1
     record_audit(db, user, "password.changed", "user", user.id)
     return {"changed": True, "reauthentication_required": True}
+
+
+@router.post("/avatar")
+def update_avatar(payload: AvatarUpdate, db: Session = Depends(get_db), user=Depends(current_user)):
+    from app.services.identity import update_avatar as apply_avatar
+
+    apply_avatar(db, user, payload.data_url)
+    return user_out(user)

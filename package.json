@@ -6,8 +6,8 @@
   "scripts": {
     "build": "node scripts/build-static.mjs",
     "start": "node server.mjs",
-    "test": "node --test business.test.js api-client.test.js server.test.js",
-    "check": "node --check app.js && node --check api-client.js && node --check auth-state.js && node --check model-consultation.js && node --check business.js && node --check ui.js && node --check data.js && node --check server.mjs && node --check static-manifest.mjs && node --check scripts/build-static.mjs"
+    "test": "node --test business.test.js api-client.test.js server.test.js views.test.js",
+    "check": "node --check app.js && node --check api-client.js && node --check auth-state.js && node --check model-consultation.js && node --check business.js && node --check ui.js && node --check data.js && node --check auth-view.js && node --check guide.js && node --check orders-view.js && node --check documents-view.js && node --check chat.js && node --check account-view.js && node --check server.mjs && node --check static-manifest.mjs && node --check scripts/build-static.mjs"
   },
   "engines": {
     "node": ">=20"

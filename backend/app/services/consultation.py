@@ -126,6 +126,14 @@ def get_owned(db: Session, consultation_id: str, owner_id: str) -> Consultation:
     return consultation
 
 
+def delete(db: Session, consultation: Consultation, actor: User, request_id: str = "") -> None:
+    db.query(ConsultationFeedback).filter_by(consultation_id=consultation.id).delete(synchronize_session=False)
+    db.query(ConsultationMessage).filter_by(consultation_id=consultation.id).delete(synchronize_session=False)
+    record_audit(db, actor, "consultation.deleted", "consultation", consultation.id, {"topic": consultation.topic}, request_id)
+    db.delete(consultation)
+    db.flush()
+
+
 def prepare_message(db: Session, consultation: Consultation, actor: User, payload: MessageCreate):
     require(consultation.owner_id == actor.id and actor.has_role("client"), "无权访问此咨询", 403, "forbidden")
     require(not payload.attachments or all(isinstance(item, dict) and item.get("file_id") for item in payload.attachments), "材料必须先上传获取file_id；当前材料仅保存，不参与模型回答", 422, "invalid_attachment")

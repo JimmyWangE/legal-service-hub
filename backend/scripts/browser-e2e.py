@@ -73,7 +73,7 @@ def idle(page):
 def go(page, target):
     destination = base + "/#/" + target
     if page.url == destination:
-        page.locator('[data-action="refresh"]').first.click()
+        page.evaluate("window.dispatchEvent(new HashChangeEvent('hashchange'))")
     else:
         page.goto(destination)
     idle(page)
@@ -88,7 +88,7 @@ def login(page, email, password):
     page.locator('[name="email"]').fill(email)
     page.locator('[name="password"]').fill(password)
     submit(page, "login")
-    expect(page.locator(".platform-shell")).to_be_visible()
+    expect(page.locator(".app-shell")).to_be_visible()
     idle(page)
 
 
@@ -127,9 +127,9 @@ try:
         lawyer_page.locator('[name="password"]').fill("browser-lawyer-pass-123")
         lawyer_page.locator('[name="registration_intent"]').select_option("lawyer")
         submit(lawyer_page, "register")
-        expect(lawyer_page.locator(".platform-shell")).to_be_visible()
+        expect(lawyer_page.locator(".app-shell")).to_be_visible()
         idle(lawyer_page)
-        go(lawyer_page, "profile")
+        go(lawyer_page, "lawyer-onboarding")
         application = lawyer_page.locator('form[data-form="lawyer-application"]')
         for name, value in {"firm": "浏览器验证律所", "region": "北京", "field": "合同纠纷", "mode": "线上服务", "license_number": "BROWSER-VALIDATION-LICENSE", "expires_on": "2099-01-01"}.items():
             application.locator(f'[name="{name}"]').fill(value)
@@ -205,16 +205,16 @@ try:
         document_id = lawyer_page.url.split("/doc/")[-1]
         lawyer_page.locator('form[data-form="version"] [name="body"]').fill("浏览器测试：第二版合同审阅报告")
         submit(lawyer_page, "version")
-        expect(lawyer_page.locator(".page-heading")).to_contain_text("v2")
+        expect(lawyer_page.locator(".doc-toolbar")).to_contain_text("v2")
         lawyer_page.locator('[data-action="workflow-modal"]').click()
-        lawyer_page.locator('[name="assignees"]').fill("C1," + lawyer_id)
+        lawyer_page.locator('[data-member-picker] li:has([data-member][value="C1"]) [data-action="picker-move"][data-dir="-1"]').click()
         submit(lawyer_page, "workflow")
         go(client_page, "doc/" + document_id)
         client_page.locator('[data-action="confirm-document"]').click()
         expect(client_page.locator('.page-body [data-action="confirm-document"]')).to_have_count(0)
         go(lawyer_page, "doc/" + document_id)
         lawyer_page.locator('[data-action="confirm-document"]').click()
-        expect(lawyer_page.locator(".document-editor .status").first).to_have_text("已确认")
+        expect(lawyer_page.locator(".doc-toolbar .status").first).to_have_text("已确认")
         go(lawyer_page, "order/" + order_id)
         lawyer_page.locator('[data-action="delivery-modal"]').click()
         lawyer_page.locator('form[data-form="delivery"] [name="document_id"]').select_option(document_id)
@@ -227,15 +227,18 @@ try:
         documents = client.get(base + f"/api/v1/documents?order_id={order_id}", headers=client_headers).json()
         contract = next(item for item in documents if item["doc_type"] == "service_contract")
         go(lawyer_page, "doc/" + contract["id"])
+        lawyer_page.locator('[data-action="doc-tab"][data-tab="files"]').click()
         lawyer_page.locator('form[data-form="document-file"] [name="file"]').set_input_files({"name": "browser-evidence.txt", "mimeType": "text/plain", "buffer": b"browser protected material"})
         submit(lawyer_page, "document-file")
         expect(lawyer_page.locator('[data-action="download-file"]')).to_be_visible()
         file_id = lawyer_page.locator('[data-action="download-file"]').get_attribute("data-id")
         go(client_page, "doc/" + contract["id"])
+        client_page.locator('[data-action="doc-tab"][data-tab="files"]').click()
         with client_page.expect_download() as download_info:
             client_page.locator('[data-action="download-file"]').click()
         assert Path(download_info.value.path()).read_bytes() == b"browser protected material"
         with client_page.expect_response(lambda response: response.url.endswith(f"/access/{lawyer_id}/revoke") and response.request.method == "POST") as revoked:
+            client_page.locator('[data-action="doc-tab"][data-tab="members"]').click()
             client_page.locator(f'[data-action="revoke-member"][data-id="{lawyer_id}"]').click()
         assert revoked.value.status == 200
         idle(client_page)
