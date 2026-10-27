@@ -124,11 +124,31 @@ def freeze_lawyer(db: Session, actor: User, lawyer_id: str, reason: str, request
     require(actor.has_role("operator"), "仅运营可冻结律师", 403, "forbidden")
     profile = db.query(LawyerProfile).filter_by(user_id=lawyer_id).with_for_update().first()
     require(profile is not None, "律师不存在", 404, "not_found")
+    require(profile.status == "approved", "仅已核准的律师可以冻结", 409, "invalid_state")
     profile.status = "frozen"
     profile.available = False
+    from app.models import Order, Quote
+
+    # 冻结只暂停新接单：有效报价失效，在途订单继续履约并提醒当事人
+    db.query(Quote).filter_by(lawyer_id=lawyer_id, status="valid").update({"status": "expired", "version": Quote.version + 1}, synchronize_session=False)
+    for order in db.query(Order).filter(Order.lawyer_id == lawyer_id, Order.status.in_(["pending_confirm", "pending_payment", "service", "pending_receipt"])).all():
+        notify(db, order.client_id, "承办律师接单权限已暂停", f"订单“{order.title}”的律师已被暂停新接单，在途服务继续；如有疑虑可申请售后或取消未支付订单", "order", order.id)
     record_audit(db, actor, "lawyer.frozen", "lawyer", lawyer_id, {"reason": reason}, request_id)
     notify(db, lawyer_id, "接单权限已冻结", reason, "lawyer", lawyer_id)
     commit_event(db, "lawyer.frozen", "lawyer", lawyer_id, {"reason": reason})
+    return profile
+
+
+def unfreeze_lawyer(db: Session, actor: User, lawyer_id: str, reason: str, request_id=""):
+    require(actor.has_role("operator"), "仅运营可恢复律师", 403, "forbidden")
+    profile = db.query(LawyerProfile).filter_by(user_id=lawyer_id).with_for_update().first()
+    require(profile is not None, "律师不存在", 404, "not_found")
+    require(profile.status == "frozen", "律师当前未被冻结", 409, "invalid_state")
+    require(profile.expires_on is not None and profile.expires_on >= date.today(), "执业资质已过期，请律师重新提交入驻申请", 409, "license_expired")
+    profile.status = "approved"
+    profile.available = True
+    record_audit(db, actor, "lawyer.unfrozen", "lawyer", lawyer_id, {"reason": reason}, request_id)
+    notify(db, lawyer_id, "接单权限已恢复", reason, "lawyer", lawyer_id)
     return profile
 
 

@@ -2,7 +2,7 @@ from app.core.idempotency import TransactionalRouter
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.serializers import document_out
+from app.api.serializers import document_out, user_briefs
 from app.core.database import get_db
 from app.core.deps import current_user, request_context
 from app.core.errors import require
@@ -33,9 +33,15 @@ def create_document(payload: DocumentCreate, db: Session = Depends(get_db), user
 def get_document(document_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     document = documents.get_document(db, user, document_id)
     include_body = not user.has_role("operator")
+    if not include_body:
+        from app.services.common import record_audit
+
+        record_audit(db, user, "document.metadata.viewed", "document", document.id)
     result = document_out(db, document, include_body=include_body)
     result["can_edit"] = documents.can_edit(db, user, document)
-    result["comments"] = [{"id": item.id, "version": item.version_number, "text": item.text, "created_at": item.created_at} for item in db.query(Comment).filter_by(document_id=document.id).order_by(Comment.created_at).limit(100).all()] if include_body else []
+    comments = db.query(Comment).filter_by(document_id=document.id).order_by(Comment.created_at).limit(200).all() if include_body else []
+    authors = user_briefs(db, [item.author_id for item in comments])
+    result["comments"] = [{"id": item.id, "version": item.version_number, "text": item.text, "author_id": item.author_id, "author_name": authors.get(item.author_id, {}).get("name"), "resolved": item.resolved, "created_at": item.created_at} for item in comments]
     result["files"] = [{"id": item.id, "name": item.original_name, "size": item.size} for item in db.query(StoredFile).filter_by(document_id=document.id, status="available").limit(100).all()] if include_body else []
     return result
 
@@ -80,3 +86,20 @@ def add_comment(document_id: str, payload: CommentCreate, db: Session = Depends(
 def revoke_access(document_id: str, member_id: str, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
     grant = documents.revoke_access(db, user, document_id, member_id, context["request_id"])
     return {"document_id": grant.document_id, "user_id": grant.user_id, "revoked_at": grant.revoked_at}
+
+
+@router.post("/documents/{document_id}/versions/{number}/restore")
+def restore_version(document_id: str, number: int, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    version = documents.restore_version(db, user, document_id, number, context["request_id"])
+    return {"id": version.id, "document_id": version.document_id, "number": version.number, "body_hash": version.body_hash, "created_at": version.created_at}
+
+
+@router.post("/documents/{document_id}/comments/{comment_id}/resolve")
+def resolve_comment(document_id: str, comment_id: str, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    comment = documents.resolve_comment(db, user, document_id, comment_id, context["request_id"])
+    return {"id": comment.id, "resolved": comment.resolved}
+
+
+@router.post("/documents/{document_id}/workflow/withdraw")
+def withdraw_workflow(document_id: str, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    return document_out(db, documents.withdraw_workflow(db, user, document_id, context["request_id"]))

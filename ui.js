@@ -20,8 +20,23 @@ export const date = (value) =>
         hour12: false,
       })
     : "—";
-export const status = (text) =>
-  `<span class="status ${["已完成", "已确认", "已认证", "已退款"].includes(text) ? "green" : ["退款中", "争议中", "已退回", "已冻结", "需补件"].includes(text) ? "red" : "orange"}">${esc(text)}</span>`;
+export const dateOnly = (value) =>
+  value ? new Date(value).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" }) : "—";
+// 相对时间：一天内显示“x分钟前/x小时前”，否则显示日期
+export const ago = (value) => {
+  if (!value) return "—";
+  const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes}分钟前`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}小时前`;
+  return dateOnly(value);
+};
+export const status = (text, tone = "warning") => `<span class="status ${tone}">${esc(text)}</span>`;
+export const shortId = (id = "") => String(id).replace(/-/g, "").slice(-8).toUpperCase();
+export const stars = (rating, count) =>
+  rating === null || rating === undefined
+    ? '<span class="rating none">暂无评价</span>'
+    : `<span class="rating" aria-label="评分${rating}分"><b>★</b> ${Number(rating).toFixed(1)}${count !== undefined ? `<small>（${count}条）</small>` : ""}</span>`;
 const paths = {
   spark:
     '<path d="m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6Z"/>',
@@ -66,18 +81,29 @@ const paths = {
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   up: '<path d="m6 15 6-6 6 6"/>',
+  scale: '<path d="M12 3v18M7 21h10M5 7h14M5 7l-3 6a3 3 0 0 0 6 0Zm14 0-3 6a3 3 0 0 0 6 0Z"/>',
+  alert: '<path d="M12 3 2 20h20ZM12 10v4M12 17v.5"/>',
+  filter: '<path d="M3 5h18l-7 8v6l-4 2v-8Z"/>',
+  star: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9Z"/>',
+  chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  wallet: '<rect x="3" y="6" width="18" height="14" rx="2"/><path d="M3 10h18M16 15h2M7 6V4h10v2"/>',
+  map: '<path d="M12 21s7-6 7-11a7 7 0 0 0-14 0c0 5 7 11 7 11Z"/><circle cx="12" cy="10" r="2.5"/>',
+  briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V4h6v3M3 12h18"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  external: '<path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
 };
 export const icon = (name) =>
   `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.doc}</svg>`;
 export const link = (url, label, primary = false) =>
   `<a class="${primary ? "btn primary" : "btn"}" href="#/${url}">${label}</a>`;
-export const button = (action, label, attrs = "", primary = false) =>
-  `<button class="btn ${primary ? "primary" : ""}" data-action="${action}" ${attrs}>${label}</button>`;
-export const empty = (text = "暂无记录", action = "") =>
-  `<div class="empty">${icon("doc")}<h3>${text}</h3><p>相关服务记录将在此统一展示。</p>${action}</div>`;
+// variant 可为 true（主按钮）或 "accent" / "danger" / "ghost" / "sm" 等组合类名
+export const button = (action, label, attrs = "", variant = false) =>
+  `<button type="button" class="btn ${variant === true ? "primary" : variant || ""}" data-action="${action}" ${attrs}>${label}</button>`;
+export const empty = (text = "暂无记录", action = "", hint = "", glyph = "doc") =>
+  `<div class="empty">${icon(glyph)}<h3>${text}</h3>${hint ? `<p>${hint}</p>` : ""}${action}</div>`;
 export const field = (label, name, value = "", opts = {}) =>
-  `<label class="field ${opts.wide ? "wide" : ""}"><span>${label}${opts.required ? " <b>*</b>" : ""}</span>${opts.options ? `<select name="${name}" ${opts.required ? "required" : ""}>${opts.options.map((v) => `<option value="${esc(v)}" ${value === v ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>` : opts.textarea ? `<textarea name="${name}" rows="${opts.rows || 4}" ${opts.required ? "required" : ""} placeholder="${esc(opts.placeholder || "")}">${esc(value)}</textarea>` : `<input name="${name}" type="${opts.type || "text"}" ${opts.type === "number" ? `step="${esc(opts.step ?? "any")}"` : ""} value="${esc(value)}" ${opts.required ? "required" : ""} ${opts.min !== undefined ? `min="${opts.min}"` : ""} ${opts.max !== undefined ? `max="${opts.max}"` : ""} placeholder="${esc(opts.placeholder || "")}">`}${opts.hint ? `<small>${opts.hint}</small>` : ""}</label>`;
+  `<label class="field ${opts.wide ? "wide" : ""}"><span>${label}${opts.required ? " <b>*</b>" : ""}</span>${opts.options ? `<select name="${name}" ${opts.required ? "required" : ""}>${opts.placeholder ? `<option value="">${esc(opts.placeholder)}</option>` : ""}${opts.options.map((v) => { const [optionValue, optionLabel] = Array.isArray(v) ? v : [v, v]; return `<option value="${esc(optionValue)}" ${String(value) === String(optionValue) ? "selected" : ""}>${esc(optionLabel)}</option>`; }).join("")}</select>` : opts.textarea ? `<textarea name="${name}" rows="${opts.rows || 4}" ${opts.required ? "required" : ""} placeholder="${esc(opts.placeholder || "")}">${esc(value)}</textarea>` : `<input name="${name}" type="${opts.type || "text"}" ${opts.type === "number" ? `step="${esc(opts.step ?? "any")}"` : ""} value="${esc(value)}" ${opts.required ? "required" : ""} ${opts.min !== undefined ? `min="${opts.min}"` : ""} ${opts.max !== undefined ? `max="${opts.max}"` : ""} ${opts.maxlength ? `maxlength="${opts.maxlength}"` : ""} placeholder="${esc(opts.placeholder || "")}">`}${opts.hint ? `<small>${opts.hint}</small>` : ""}</label>`;
 export const formData = (form) => Object.fromEntries(new FormData(form));
 export const initials = (name = "") => (String(name).trim()[0] || "用").toUpperCase();
 export const avatar = (person = {}, size = "") =>

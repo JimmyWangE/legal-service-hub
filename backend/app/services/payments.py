@@ -195,11 +195,12 @@ def synchronize_refund(db, refund_id):
     if completed:
         payment.refunded = money(payment.refunded) + refund.amount
         require(payment.refunded <= payment.amount, "累计退款超出支付金额", 409, "refund_exceeds_payment")
-        order.status = "closed" if payment.refunded == order.paid else "service"
-        order.settlement_status = "refunded" if payment.refunded == order.paid else "partially_refunded"
+        case = db.get(AfterSalesCase, refund.case_id) if refund.case_id else None
+        from app.services.trade import settle_refund
+
+        settle_refund(order, case, payment.refunded)
         order.version += 1
-        if refund.case_id:
-            case = db.get(AfterSalesCase, refund.case_id)
+        if case:
             case.status = "approved"
         notify(db, order.client_id, "退款已确认", f"支付机构已确认退款{refund.amount}元", "order", order.id)
         record_audit(db, None, "refund.success", "refund", refund.id, {"amount": str(refund.amount)})

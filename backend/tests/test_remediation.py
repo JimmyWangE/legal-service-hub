@@ -46,7 +46,10 @@ def create_order(client):
     assert quote.status_code == 200, quote.text
     order = client.post(f"/api/v1/quotes/{quote.json()['id']}/accept", headers=client_headers)
     assert order.status_code == 200, order.text
-    return client_headers, lawyer_headers, order.json()
+    assert client.post(f"/api/v1/orders/{order.json()['id']}/confirm", headers=client_headers).status_code == 200
+    confirmed = client.post(f"/api/v1/orders/{order.json()['id']}/confirm", headers=lawyer_headers)
+    assert confirmed.status_code == 200, confirmed.text
+    return client_headers, lawyer_headers, confirmed.json()
 
 
 @pytest.fixture

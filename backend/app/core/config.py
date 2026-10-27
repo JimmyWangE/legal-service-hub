@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     model_enable_thinking: bool = False
     model_temperature: float = 0.2
     model_fallback_to_stub: bool = False
+    after_sales_window_days: int = 15
     seed_demo_data: bool = True
     payment_provider: str = "disabled"
     payment_stub_enabled: bool = False

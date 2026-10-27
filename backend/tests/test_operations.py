@@ -355,7 +355,7 @@ def test_fresh_and_legacy_migrations_preserve_identity_and_freeze_unverified_law
         assert connection.execute(text("SELECT role FROM user_roles WHERE user_id = 'historic-lawyer'")).scalar() == "client"
         assert connection.execute(text("SELECT status FROM lawyer_profiles WHERE user_id = 'historic-lawyer'")).scalar() == "frozen"
         assert not connection.execute(text("SELECT is_active FROM users WHERE id = 'C1'")).scalar()
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261020_05"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261021_06"
     legacy_engine.dispose()
     process_env["DATABASE_URL"] = f"sqlite:///{tmp_path / 'fresh.db'}"
     result = subprocess.run([sys.executable, "-m", "alembic", "-c", "backend/alembic.ini", "upgrade", "head"], cwd=repository, env=process_env, capture_output=True, text=True)

@@ -63,6 +63,13 @@ class LoginResponse(BaseModel):
 class ConsultationCreate(BaseModel):
     topic: str = Field(default="综合咨询", max_length=80)
     title: str | None = Field(default=None, max_length=200)
+    category: Literal["civil", "criminal", "unsure"] = "unsure"
+    intake: dict[str, str] = Field(default_factory=dict, max_length=12)
+
+    @field_validator("intake")
+    @classmethod
+    def bounded_intake(cls, value):
+        return {str(key)[:40]: str(item)[:500] for key, item in value.items() if str(item).strip()}
 
 
 class MessageCreate(BaseModel):
@@ -104,7 +111,33 @@ class QuoteCreate(BaseModel):
     deliverables: str = Field(min_length=1, max_length=5000)
     price: Decimal = Field(gt=0, le=Decimal("100000000"))
     days: int = Field(gt=0, le=3650)
+    payment_terms: str = Field(default="签署确认后一次性支付", max_length=1000)
     valid_until: date
+
+
+class RequestUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=2, max_length=200)
+    domain: str = Field(min_length=1, max_length=30)
+    field: str = Field(min_length=1, max_length=100)
+    service_type: str = Field(min_length=1, max_length=100)
+    facts: str = Field(min_length=8, max_length=12000)
+    region: str = Field(min_length=1, max_length=100)
+    budget: Decimal = Field(gt=0, le=Decimal("100000000"))
+    deadline: date
+    deliverables: str = Field(min_length=1, max_length=5000)
+    expected_version: int = Field(ge=1)
+
+
+class ReasonBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(default="", max_length=500)
+
+
+class ReviewCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rating: int = Field(ge=1, le=5)
+    content: str = Field(default="", max_length=1000)
 
 
 class DocumentCreate(BaseModel):
@@ -147,7 +180,8 @@ class PaymentWebhook(BaseModel):
 
 
 class DeliveryCreate(BaseModel):
-    document_id: str | None = None
+    document_id: str = Field(min_length=1, max_length=36)
+    note: str = Field(default="", max_length=1000)
 
 
 class AfterSalesCreate(BaseModel):
@@ -157,8 +191,9 @@ class AfterSalesCreate(BaseModel):
 
 
 class CaseResolve(BaseModel):
-    decision: Literal["approve", "reject"]
+    decision: Literal["approve", "reject", "complete"]
     resolution: str = Field(min_length=2, max_length=2000)
+    amount: Decimal | None = Field(default=None, ge=0)
 
 
 class LawyerApply(BaseModel):
@@ -192,7 +227,7 @@ class VerifyEmail(BaseModel):
 class PasswordChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     old_password: str = Field(min_length=1, max_length=128)
-    new_password: str = Field(min_length=12, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class AvatarUpdate(BaseModel):

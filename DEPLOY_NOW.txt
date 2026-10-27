@@ -1,0 +1,59 @@
+========================================
+法律服务平台快速部署指令
+预发布环境: http://172.22.3.76:189/
+========================================
+
+请在终端中依次执行以下命令:
+
+# 1. 进入项目目录
+cd /home/lawsft/legal-service-hub
+
+# 2. 运行数据库迁移（已完成✅）
+# cd backend && source .venv/bin/activate && alembic upgrade head
+
+# 3. 重启所有服务
+sudo systemctl restart legal-service-hub-api legal-service-hub-worker legal-service-hub
+
+# 4. 检查服务状态
+sudo systemctl status legal-service-hub-api
+sudo systemctl status legal-service-hub-worker
+sudo systemctl status legal-service-hub
+
+# 5. 验证健康状态
+curl http://127.0.0.1:8000/health/live
+curl http://127.0.0.1:8000/health/ready
+
+# 6. 访问平台
+# 浏览器打开: http://172.22.3.76:189/
+
+========================================
+本次部署包含的新功能:
+========================================
+✅ 咨询分类系统 (民事/刑事/行政)
+✅ 分类过滤API (category & risk_level参数)
+✅ 历史记录分类徽章
+✅ 专业UI增强 (160+ 行CSS)
+✅ 增强的帮助指南
+
+========================================
+如遇问题:
+========================================
+# 查看日志
+sudo journalctl -u legal-service-hub-api -n 50
+sudo journalctl -u legal-service-hub-worker -n 50
+sudo journalctl -u legal-service-hub -n 50
+
+# 检查端口占用
+lsof -i :8000
+lsof -i :189
+
+# 手动启动 (如果systemd有问题)
+cd /home/lawsft/legal-service-hub/backend
+source .venv/bin/activate
+nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4 &
+nohup .venv/bin/python -m app.worker &
+
+cd /home/lawsft/legal-service-hub
+nohup node server.mjs &
+
+========================================

@@ -1,0 +1,41 @@
+========================================
+快速修复命令 - 请依次执行
+========================================
+
+# 第1步：查看当前服务配置
+sudo cat /etc/systemd/system/legal-service-hub.service
+
+# 第2步：备份配置
+sudo cp /etc/systemd/system/legal-service-hub.service /etc/systemd/system/legal-service-hub.service.backup
+
+# 第3步：编辑服务配置
+sudo nano /etc/systemd/system/legal-service-hub.service
+
+在 [Service] 段落中添加（如果没有的话）：
+------------------------------------
+Environment="HOST=0.0.0.0"
+Environment="PORT=189"
+Environment="API_UPSTREAM=http://127.0.0.1:8000"
+------------------------------------
+
+保存并退出（Ctrl+O, Enter, Ctrl+X）
+
+# 第4步：重新加载并重启
+sudo systemctl daemon-reload
+sudo systemctl restart legal-service-hub-api legal-service-hub-worker legal-service-hub
+
+# 第5步：等待服务启动
+sleep 5
+
+# 第6步：验证
+netstat -tlnp | grep 189
+curl -I http://172.22.3.76:189/
+
+========================================
+或者运行一键修复脚本（自动完成上述步骤）
+========================================
+
+cd /home/lawsft/legal-service-hub
+./fix-and-deploy.sh
+
+========================================

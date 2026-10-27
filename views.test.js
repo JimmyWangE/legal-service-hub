@@ -4,6 +4,7 @@ import { renderAccount, renderLawyerOnboarding } from "./account-view.js";
 import { renderAuthPage } from "./auth-view.js";
 import { renderDocumentDetail, renderDocumentList, workflowModalBody } from "./documents-view.js";
 import { renderWorkbench } from "./guide.js";
+import { createModelConsultation } from "./model-consultation.js";
 import { renderOrderDetail, renderOrderList, setOrderFilter, setOrderQuery } from "./orders-view.js";
 import { avatar } from "./ui.js";
 
@@ -12,6 +13,79 @@ const client = { id: "C1", name: "陈先生", email: "client@example.com", roles
 const lawyer = { id: "L1", name: "林律师", email: "lawyer@example.com", roles: ["client", "lawyer"] };
 const order = (status, extra = {}) => ({ id: `O-${status}`, title: `订单${status}`, client_id: "C1", lawyer_id: "L1", client_name: "陈先生", lawyer_name: "林律师", price: "1800.00", paid: status === "pending_payment" ? "0" : "1800.00", status, payment_status: status === "pending_payment" ? "unpaid" : "paid", settlement_status: "frozen", scope: "合同审阅", created_at: "2026-10-20T08:00:00", updated_at: "2026-10-20T08:00:00", payments: [], deliveries: [], cases: [], ...extra });
 const doc = { id: "D1", order_id: "O1", owner_id: "L1", title: "审阅意见书", status: "signing", current_version: 2, locked_version: 2, members: ["L1", "C1"], member_profiles: [{ id: "L1", name: "林律师" }, { id: "C1", name: "陈先生" }], created_at: "2026-10-20T08:00:00", versions: [{ number: 1, author_id: "L1", body: null, created_at: "2026-10-20T08:00:00" }, { number: 2, author_id: "L1", body: "正文<script>", created_at: "2026-10-20T09:00:00" }], workflow: [{ sequence: 1, assignee_id: "L1", version: 2, status: "confirmed", reason: "" }, { sequence: 2, assignee_id: "C1", version: 2, status: "pending", reason: "" }], comments: [], files: [], can_edit: true };
+
+function consultationHarness() {
+  let focused = "";
+  const element = (dataset) => ({ dataset, events: {}, value: "", addEventListener(name, handler) { this.events[name] = handler; }, focus() { focused = this.dataset.modelCategory; } });
+  const categories = ["civil", "criminal", "unsure"].map((value) => element({ modelCategory: value }));
+  const fields = ["region", "time", "goal", "role", "coercive_measure", "location"].map((value) => element({ intake: value }));
+  const root = {
+    querySelector: (selector) => selector === ".legal-model" ? {} : categories.find((item) => selector === `[data-model-category="${item.dataset.modelCategory}"]`) || null,
+    querySelectorAll: (selector) => selector === "[data-model-category]" ? categories : selector === "[data-intake]" ? fields : [],
+  };
+  const route = { page: "model-chat", id: "" };
+  const view = createModelConsultation({ getDb: () => ({ modelChats: [] }), getActor: () => ({ ...client, role: "client" }), refresh() {} });
+  view.render(route);
+  view.bind(root);
+  return {
+    render: () => view.render(route),
+    click: (category) => categories.find((item) => item.dataset.modelCategory === category).events.click(),
+    input: (key, value) => {
+      const field = fields.find((item) => item.dataset.intake === key);
+      field.value = value;
+      field.events.input();
+    },
+    key: (category, key) => {
+      let prevented = false;
+      categories.find((item) => item.dataset.modelCategory === category).events.keydown({ key, preventDefault() { prevented = true; } });
+      return prevented;
+    },
+    focused: () => focused,
+  };
+}
+
+test("咨询分类：展示三张可访问卡片，默认仅一个键盘入口", () => {
+  const html = consultationHarness().render();
+  assert.match(html, /class="category-picker" aria-labelledby="category-picker-title"/);
+  assert.equal((html.match(/role="radio" /g) || []).length, 3);
+  assert.equal((html.match(/tabindex="0"/g) || []).length, 1);
+  for (const title of ["民事问题", "刑事问题", "我不确定"]) assert.match(html, new RegExp(`<b>${title}</b>`));
+  assert.doesNotMatch(html, /class="intake-panel/);
+});
+
+test("咨询分类：切换对应表单、保留当前分类填写、展示刑事风险与不确定引导", () => {
+  const view = consultationHarness();
+  view.click("civil");
+  assert.match(view.render(), /补充案件信息/);
+  assert.match(view.render(), /data-intake="region"/);
+  view.input("goal", "追回货款");
+  view.click("civil");
+  assert.match(view.render(), /value="追回货款"/);
+  view.click("criminal");
+  assert.match(view.render(), /补充刑事事项信息/);
+  assert.doesNotMatch(view.render(), /data-intake="region"|value="追回货款"/);
+  view.input("coercive_measure", "已被刑事拘留");
+  assert.match(view.render(), /已被采取强制措施，请尽快联系刑事律师/);
+  view.click("unsure");
+  assert.match(view.render(), /class="intake-guidance"/);
+  assert.doesNotMatch(view.render(), /data-intake=/);
+});
+
+test("咨询分类：方向键循环切换，Home/End 跳转并恢复焦点", () => {
+  const view = consultationHarness();
+  assert.equal(view.key("civil", "ArrowRight"), true);
+  assert.equal(view.focused(), "criminal");
+  assert.match(view.render(), /aria-checked="true" tabindex="0" class="category-card criminal selected"/);
+  assert.equal(view.key("criminal", "End"), true);
+  assert.equal(view.focused(), "unsure");
+  assert.equal(view.key("unsure", "ArrowDown"), true);
+  assert.equal(view.focused(), "civil");
+  assert.equal(view.key("civil", "ArrowLeft"), true);
+  assert.equal(view.focused(), "unsure");
+  assert.equal(view.key("unsure", "Home"), true);
+  assert.equal(view.focused(), "civil");
+  assert.equal(view.key("civil", "Tab"), false);
+});
 
 test("登录页左侧宣传、右侧表单，注册保留安全问答字段", () => {
   const login = renderAuthPage(false);
