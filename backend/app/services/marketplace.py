@@ -14,6 +14,7 @@ from app.models import (
     OrderReview,
     Quote,
     ServiceRequest,
+    StoredFile,
     User,
 )
 from app.schemas import QuoteCreate, RequestCreate, RequestUpdate
@@ -23,6 +24,7 @@ from app.services.common import commit_event, new_id, notify, record_audit, stab
 def create_request(db: Session, user: User, payload: RequestCreate, request_id: str = "") -> ServiceRequest:
     require(user.has_role("client"), "只有当事人可以发布需求", 403, "forbidden")
     require(payload.deadline >= date.today(), "期望截止日期不能早于今天", 422, "invalid_deadline")
+    attachments = request_attachments(db, user, payload.attachment_file_ids)
     if payload.source_consultation_id:
         from app.models import Consent, Consultation
 
@@ -45,6 +47,7 @@ def create_request(db: Session, user: User, payload: RequestCreate, request_id: 
         field=payload.field,
         service_type=payload.service_type,
         facts=payload.facts,
+        attachments_json=attachments,
         region=payload.region,
         budget=payload.budget,
         deadline=payload.deadline,
@@ -58,6 +61,19 @@ def create_request(db: Session, user: User, payload: RequestCreate, request_id: 
     db.flush()
     db.refresh(request)
     return request
+
+
+def request_attachments(db: Session, user: User, file_ids: list[str]) -> list[dict]:
+    require(len(file_ids) == len(set(file_ids)), "请勿重复关联同一个附件", 422, "invalid_attachment")
+    if not file_ids:
+        return []
+    stored = {item.id: item for item in db.query(StoredFile).filter(StoredFile.id.in_(file_ids)).all()}
+    require(all(file_id in stored and stored[file_id].owner_id == user.id and stored[file_id].status == "available" and stored[file_id].document_id is None for file_id in file_ids), "附件不存在、不可用或不属于当前账户，请重新上传", 422, "invalid_attachment")
+    return [{"file_id": item.id, "name": item.original_name, "size": item.size, "content_type": item.content_type} for item in (stored[file_id] for file_id in file_ids)]
+
+
+def can_download_request_attachments(db: Session, user: User, request: ServiceRequest) -> bool:
+    return request.owner_id == user.id or db.query(Order.id).filter(Order.request_id == request.id, Order.lawyer_id == user.id, Order.status != "cancelled").first() is not None
 
 
 def visible_requests(db: Session, user: User, offset=0, limit=50, filters: dict | None = None) -> list[ServiceRequest]:
@@ -90,9 +106,9 @@ def mask_sensitive(text: str) -> str:
 def request_view(db: Session, user: User, request: ServiceRequest) -> dict:
     """律师只看到脱敏需求；报价或成单后才可见当事人身份以便沟通。"""
     if user.has_role("operator") or request.owner_id == user.id:
-        return {"masked": False, "reveal_owner": True}
+        return {"masked": False, "reveal_owner": True, "can_download_attachments": request.owner_id == user.id}
     engaged = db.query(Quote.id).filter_by(request_id=request.id, lawyer_id=user.id).first() is not None
-    return {"masked": True, "reveal_owner": engaged}
+    return {"masked": True, "reveal_owner": engaged, "can_download_attachments": can_download_request_attachments(db, user, request)}
 
 
 def update_request(db: Session, user: User, request_id: str, payload: RequestUpdate, request_context: str = "") -> ServiceRequest:

@@ -6,6 +6,7 @@ import { createChat } from "./chat.js";
 import { documentTemplates, newDocumentBody, refreshPicker, renderDocumentCards, renderDocumentDetail, renderDocumentList, setDocumentFilter, setDocumentQuery, setDocumentTab, workflowModalBody } from "./documents-view.js";
 import { renderWorkbench, setGuideTab, toggleGuide } from "./guide.js";
 import { createModelConsultation } from "./model-consultation.js";
+import { bindRequestAttachments, renderRequestAttachments, requestAttachmentField, uploadRequestAttachments } from "./request-attachments.js";
 import { renderOrderCards, renderOrderDetail, renderOrderList, setOrderFilter, setOrderQuery } from "./orders-view.js";
 import { avatar, button, date, empty, esc, field, formData, icon, money, status } from "./ui.js";
 
@@ -162,7 +163,7 @@ function requestPage() {
   if (!item) return empty("未找到需求");
   const me = getCurrentUser().id;
   const quoted = (item.quotes || []).some((quote) => quote.lawyer_id === me);
-  return `<a class="back-link" href="#/requests">${icon("back")} 返回需求列表</a>${heading(item.title, `${item.region} · ${item.service_type}`, ownsRole("lawyer") && item.owner_id !== me && quoted ? button("open-chat", `${icon("message")} 联系当事人`, `data-peer="${esc(item.owner_id)}"`) : "")}<section class="surface"><div class="badges">${badge(item.status)}</div>${detailList([["事实与目标", item.facts], ["期望交付", item.deliverables], ["预算", money(item.budget)], ["公开范围", item.visibility]])}</section><section class="surface"><h2>律师报价</h2>${rows(item.quotes || [], [["服务范围", (quote) => esc(quote.scope)], ["交付", (quote) => esc(quote.deliverables)], ["报价", (quote) => money(quote.price)], ["有效期", (quote) => esc(quote.valid_until)], ["操作", (quote) => item.owner_id === me ? `${quote.status === "valid" && item.status === "quoting" ? button("accept-quote", "接受报价并创建订单", `data-id="${esc(quote.id)}"`, true) : badge(quote.status)} ${button("open-chat", `${icon("message")} 交流`, `data-peer="${esc(quote.lawyer_id)}"`)}` : badge(quote.status)]])}</section>${ownsRole("lawyer") && item.owner_id !== me && item.status === "quoting" ? `<section class="surface"><h2>提交报价</h2><form data-form="quote">${field("服务范围", "scope", "", { textarea: true, required: true })}${field("交付物", "deliverables", "", { required: true })}<div class="form-grid">${field("费用（元）", "price", "", { type: "number", min: "0.01", required: true })}${field("服务天数", "days", "3", { type: "number", min: 1, required: true })}${field("报价有效期", "valid_until", "", { type: "date", required: true })}</div>${formButton("提交报价")}</form></section>` : ""}`;
+  return `<a class="back-link" href="#/requests">${icon("back")} 返回需求列表</a>${heading(item.title, `${item.region} · ${item.service_type}`, ownsRole("lawyer") && item.owner_id !== me && quoted ? button("open-chat", `${icon("message")} 联系当事人`, `data-peer="${esc(item.owner_id)}"`) : "")}<section class="surface"><div class="badges">${badge(item.status)}</div>${detailList([["事实与目标", item.facts], ["期望交付", item.deliverables], ["预算", money(item.budget)], ["公开范围", item.visibility]])}</section>${renderRequestAttachments(item)}<section class="surface"><h2>律师报价</h2>${rows(item.quotes || [], [["服务范围", (quote) => esc(quote.scope)], ["交付", (quote) => esc(quote.deliverables)], ["报价", (quote) => money(quote.price)], ["有效期", (quote) => esc(quote.valid_until)], ["操作", (quote) => item.owner_id === me ? `${quote.status === "valid" && item.status === "quoting" ? button("accept-quote", "接受报价并创建订单", `data-id="${esc(quote.id)}"`, true) : badge(quote.status)} ${button("open-chat", `${icon("message")} 交流`, `data-peer="${esc(quote.lawyer_id)}"`)}` : badge(quote.status)]])}</section>${ownsRole("lawyer") && item.owner_id !== me && item.status === "quoting" ? `<section class="surface"><h2>提交报价</h2><form data-form="quote">${field("服务范围", "scope", "", { textarea: true, required: true })}${field("交付物", "deliverables", "", { required: true })}<div class="form-grid">${field("费用（元）", "price", "", { type: "number", min: "0.01", required: true })}${field("服务天数", "days", "3", { type: "number", min: 1, required: true })}${field("报价有效期", "valid_until", "", { type: "date", required: true })}</div>${formButton("提交报价")}</form></section>` : ""}`;
 }
 
 function reviewPage() {
@@ -303,7 +304,7 @@ function requestModal(summary = null) {
   const missingLabels = { title: "需求标题", domain: "业务分类", field: "专业领域", service_type: "服务类型", region: "地区", budget: "预算", deadline: "期望截止日期", facts: "事实与目标", deliverables: "交付物要求" };
   const missing = (generated.missing_fields || []).map((name) => missingLabels[name] || name).filter(Boolean);
   const notice = summary ? `<div class="remote-warning"><b>${generated.generated_by === "model" ? "法律模型已根据咨询对话生成需求草稿" : "已根据咨询记录生成需求草稿"}</b><p>请逐项核对并按实际需求修改，系统不会未经确认自动发布。</p>${missing.length ? `<p>仍需补充：${esc(missing.join("、"))}</p>` : ""}</div>` : "";
-  modal("发布服务需求", `${notice}<form data-form="request">${summary ? `<input type="hidden" name="source_consultation_id" value="${esc(summary.consultation_id)}"><input type="hidden" name="consent_id" value="${esc(summary.consent_id)}">` : ""}${field("需求标题", "title", generated.title || "", { required: true })}<div class="form-grid">${field("业务分类", "domain", generated.domain || "", { required: true })}${field("专业领域", "field", generated.field || "", { required: true })}${field("服务类型", "service_type", generated.service_type || "", { required: true })}${field("地区", "region", generated.region || "", { required: true })}${field("预算（元）", "budget", generated.budget || "", { type: "number", min: "0.01", required: true })}${field("期望截止日期", "deadline", generated.deadline || "", { type: "date", required: true })}</div>${field("事实与目标（至少8字）", "facts", facts, { textarea: true, required: true })}${field("交付物要求", "deliverables", generated.deliverables || "", { textarea: true, required: true })}${field("公开范围", "visibility", "认证律师可见", { options: ["认证律师可见"] })}<label class="check-row"><input name="consent" type="checkbox" required> 我已核对内容并同意向认证律师发布需求</label>${formButton("确认发布")}</form>`);
+  modal("发布服务需求", `${notice}<form data-form="request">${summary ? `<input type="hidden" name="source_consultation_id" value="${esc(summary.consultation_id)}"><input type="hidden" name="consent_id" value="${esc(summary.consent_id)}">` : ""}${field("需求标题", "title", generated.title || "", { required: true })}<div class="form-grid">${field("业务分类", "domain", generated.domain || "", { required: true })}${field("专业领域", "field", generated.field || "", { required: true })}${field("服务类型", "service_type", generated.service_type || "", { required: true })}${field("地区", "region", generated.region || "", { required: true })}${field("预算（元）", "budget", generated.budget || "", { type: "number", min: "0.01", required: true })}${field("期望截止日期", "deadline", generated.deadline || "", { type: "date", required: true })}</div>${field("事实与目标（至少8字）", "facts", facts, { textarea: true, required: true })}${field("交付物要求", "deliverables", generated.deliverables || "", { textarea: true, required: true })}${requestAttachmentField()}${field("公开范围", "visibility", "认证律师可见", { options: ["认证律师可见"] })}<label class="check-row"><input name="consent" type="checkbox" required> 我已核对内容并同意向认证律师发布需求</label>${formButton("确认发布")}</form>`);
 }
 
 function modal(title, body) {
@@ -314,6 +315,7 @@ function modal(title, body) {
   element.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header><h2>${esc(title)}</h2><button class="icon-btn" data-action="close-modal" aria-label="关闭">${icon("close")}</button></header><div class="modal-body">${body}</div></section>`;
   document.body.append(element);
   restoreDrafts(element);
+  bindRequestAttachments(element);
   element.querySelector("input:not([type=hidden]), textarea, button")?.focus();
 }
 
@@ -447,6 +449,7 @@ document.addEventListener("click", async (event) => {
     if (action === "revoke-member") { await mutate(`/documents/${route.id}/access/${element.dataset.id}/revoke`); return await load(); }
     if (action === "export-version") { const entry = await apiRequest(`/documents/${route.id}/versions/${element.dataset.version}`); return download(`${state.detail.title}-v${entry.number}.txt`, entry.body); }
     if (action === "download-file") return await downloadFile(element.dataset.id, element.dataset.name);
+    if (action === "download-request-file") return await downloadFile(element.dataset.id, element.dataset.name, `/requests/${encodeURIComponent(element.dataset.requestId)}/files/${encodeURIComponent(element.dataset.id)}`);
     if (action === "review-file") return await downloadFile(element.dataset.id, `审核材料-${element.dataset.id}`, `/admin/lawyer-applications/${element.dataset.application}/files/${element.dataset.id}`);
     if (action === "delivery-modal") return modal("提交交付物", state.documents.length ? `<form data-form="delivery"><p class="muted">选择本订单中已完成的文书作为交付物，当事人确认收悉后订单完成。</p><label class="field"><span>交付文书</span><select name="document_id" required>${state.documents.map((item) => `<option value="${esc(item.id)}">${esc(item.title)} · v${item.current_version} · ${esc(labels[item.status] || item.status)}</option>`).join("")}</select></label>${formButton("提交交付")}</form>` : `<div class="info-callout warn">本订单还没有文书，请先新建交付文书。</div><div class="modal-actions">${button("new-document", "新建文书", `data-order="${esc(route.id)}"`, true)}</div>`);
     if (action === "accept-delivery") { await mutate(`/orders/${route.id}/receipt?accepted=true`); notify("已确认收悉，订单完成"); return await load(); }
@@ -502,7 +505,14 @@ document.addEventListener("submit", async (event) => {
       const summary = await mutate(`/consultations/${form.dataset.id}/summary`, { consent: form.elements.consent.checked, scope: "咨询转服务需求" });
       return requestModal(summary);
     }
-    if (kind === "request") { values.consent = form.elements.consent.checked; const item = await mutate("/requests", values); target = ["requests", item.id]; }
+    if (kind === "request") {
+      const owner = getCurrentUser()?.id;
+      values.consent = form.elements.consent.checked;
+      values.attachment_file_ids = await uploadRequestAttachments(form, uploadFile);
+      if (!owner || owner !== getCurrentUser()?.id) throw new Error("账户已变更，请重新登录后发布需求");
+      const item = await mutate("/requests", values);
+      target = ["requests", item.id];
+    }
     if (kind === "quote") { values.days = Number(values.days); await mutate(`/requests/${route.id}/quotes`, values); }
     if (kind === "document") { const item = await mutate("/documents", { ...values, doc_type: "legal_document", members: [] }); target = ["doc", item.id]; }
     if (kind === "version") { values.base_version = Number(values.base_version); await mutate(`/documents/${route.id}/versions`, values); }

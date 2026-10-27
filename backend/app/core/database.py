@@ -60,6 +60,7 @@ def init_db() -> None:
     # 开发库由 create_all 建表，不会补齐已有表的新列；预发布和生产走 Alembic 迁移。
     for table, column, definition in (
         ("users", "avatar_data", "TEXT"), ("chat_messages", "attachment_json", "JSON"),
+        ("service_requests", "attachments_json", "JSON NOT NULL DEFAULT '[]'"),
         ("orders", "deliverables", "TEXT NOT NULL DEFAULT ''"), ("orders", "days", "INTEGER NOT NULL DEFAULT 0"),
         ("orders", "payment_terms", "TEXT NOT NULL DEFAULT ''"), ("orders", "client_confirmed_at", "TIMESTAMP"),
         ("orders", "lawyer_confirmed_at", "TIMESTAMP"), ("orders", "closed_reason", "VARCHAR(500) NOT NULL DEFAULT ''"),
