@@ -622,6 +622,9 @@
 .model-scenario.blue {
   background: linear-gradient(110deg, #fafafa 20%, #bdd7f1);
 }
+.model-scenario.red {
+  background: linear-gradient(110deg, #fafafa 20%, #f0c4be);
+}
 .model-scenario.purple {
   background: linear-gradient(110deg, #fafafa 20%, #d4bbea);
 }
@@ -650,6 +653,9 @@
 }
 .model-scenario.blue h2 span {
   color: #89b5df;
+}
+.model-scenario.red h2 span {
+  color: #cf776c;
 }
 .model-scenario.purple h2 span {
   color: #b495d8;
