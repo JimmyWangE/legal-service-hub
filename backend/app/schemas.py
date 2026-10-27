@@ -104,6 +104,7 @@ class RequestCreate(BaseModel):
     source_consultation_id: str | None = None
     consent: bool = False
     consent_id: str | None = None
+    attachment_file_ids: list[str] = Field(default_factory=list, max_length=8)
 
 
 class QuoteCreate(BaseModel):

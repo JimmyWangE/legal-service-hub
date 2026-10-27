@@ -1,11 +1,12 @@
 from app.core.idempotency import TransactionalRouter
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.serializers import application_out, lawyer_out, order_out, quote_out, request_out, user_briefs
 from app.core.database import get_db
 from app.core.deps import current_user, idempotency_key, request_context
-from app.models import LawyerApplication, LawyerProfile, Order, Quote, ServiceRequest, User
+from app.models import LawyerApplication, LawyerProfile, Order, Quote, ServiceRequest, StoredFile, User
 from app.schemas import LawyerApply, QuoteCreate, ReasonBody, RequestCreate, RequestUpdate
 from app.services import identity, marketplace
 
@@ -57,6 +58,19 @@ def get_request(request_id: str, db: Session = Depends(get_db), user: User = Dep
     require(allowed, "无权访问此需求", 403, "forbidden")
     marketplace.expire_stale_quotes(db, item.id)
     return request_out(item, marketplace.request_view(db, user, item))
+
+
+@router.get("/requests/{request_id}/files/{file_id}")
+def download_request_file(request_id: str, file_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    from app.core.errors import require
+
+    item = db.get(ServiceRequest, request_id)
+    require(item is not None, "需求不存在", 404, "not_found")
+    require(marketplace.can_download_request_attachments(db, user, item), "仅需求本人和成单律师可下载原始附件", 403, "forbidden")
+    require(any(attachment["file_id"] == file_id for attachment in (item.attachments_json or [])), "附件未关联到此需求", 404, "not_found")
+    stored = db.get(StoredFile, file_id)
+    require(stored is not None and stored.status == "available" and stored.owner_id == item.owner_id and stored.document_id is None, "附件不可用", 404, "not_found")
+    return FileResponse(stored.storage_path, filename=stored.original_name, media_type="application/octet-stream", headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/requests/{request_id}/quotes")

@@ -61,6 +61,8 @@ def request_out(request: ServiceRequest, view: dict | None = None) -> dict:
         "id": request.id, "owner_id": request.owner_id if view["reveal_owner"] else None,
         "source_consultation_id": None if view["masked"] else request.source_consultation_id,
         "masked": view["masked"],
+        "attachments": (request.attachments_json or []) if view.get("can_download_attachments", not view["masked"]) else [],
+        "attachment_count": len(request.attachments_json or []),
         "title": request.title, "domain": request.domain, "field": request.field,
         "service_type": request.service_type, "facts": mask_sensitive(request.facts) if view["masked"] else request.facts, "region": request.region,
         "budget": request.budget, "deadline": request.deadline, "deliverables": request.deliverables,

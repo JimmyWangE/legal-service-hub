@@ -124,6 +124,7 @@ class ServiceRequest(Base):
     field: Mapped[str] = mapped_column(String(100))
     service_type: Mapped[str] = mapped_column(String(100))
     facts: Mapped[str] = mapped_column(Text)
+    attachments_json: Mapped[list[dict]] = mapped_column(JSON, default=list, server_default="[]")
     region: Mapped[str] = mapped_column(String(100))
     budget: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     deadline: Mapped[date] = mapped_column(Date)

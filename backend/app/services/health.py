@@ -17,7 +17,7 @@ from app.core.errors import DomainError
 from app.services.model_provider import get_model_provider
 
 
-SCHEMA_REVISION = "20261021_06"
+SCHEMA_REVISION = "20261027_07"
 
 
 def check_database(deep=False):
