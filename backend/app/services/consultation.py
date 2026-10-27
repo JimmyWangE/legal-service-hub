@@ -99,7 +99,7 @@ def _generate_request_draft(consultation: Consultation, messages: list[Consultat
         "事实与目标应概括用户已说明的事实、诉求和希望结果；交付物要求应根据明确诉求归纳，无法确定时填写合理的待确认描述。"
         "JSON 字段必须严格包含：title、domain、field、service_type、region、budget、deadline、facts、deliverables、confidence。"
         "budget 只填写数字字符串或空字符串；deadline 只填写 YYYY-MM-DD 或空字符串；confidence 是字段到 0-1 数字的对象。\n\n"
-        f"咨询领域：{consultation.topic}\n对话记录：\n{_conversation_transcript(messages)}"
+        f"咨询领域：{consultation.topic}\n业务分类请从“民事、刑事、行政、非诉”中选择。\n对话记录：\n{_conversation_transcript(messages)}"
     )
     try:
         answer = get_model_provider().answer(prompt, "服务需求字段提取")
@@ -109,9 +109,15 @@ def _generate_request_draft(consultation: Consultation, messages: list[Consultat
         return fallback
 
 
-def create(db: Session, owner_id: str, topic: str, title: str | None) -> Consultation:
+CUSTODY_ANSWERS = {"已被刑事拘留", "已被逮捕", "被监视居住", "被取保候审", "是"}
+
+
+def create(db: Session, owner_id: str, topic: str, title: str | None, category: str = "unsure", intake: dict | None = None) -> Consultation:
+    intake = intake or {}
+    risk = "high" if category == "criminal" and intake.get("coercive_measure") in CUSTODY_ANSWERS else "normal"
     consultation = Consultation(
-        id=new_id(), owner_id=owner_id, topic=topic, title=title or "新的法律咨询"
+        id=new_id(), owner_id=owner_id, topic=topic, title=title or "新的法律咨询",
+        category=category, intake_json=intake or None, risk_level=risk,
     )
     db.add(consultation)
     db.flush()
@@ -148,6 +154,11 @@ def prepare_message(db: Session, consultation: Consultation, actor: User, payloa
     if payload.context_enabled:
         history = db.query(ConsultationMessage).filter_by(consultation_id=consultation.id).order_by(ConsultationMessage.sequence.desc()).limit(12).all()
         context = [{"role": item.role, "content": item.text} for item in reversed(history)]
+    if consultation.intake_json:
+        labels = {"civil": "民事问题", "criminal": "刑事问题", "unsure": "暂不确定类型"}
+        names = {"role": "身份", "coercive_measure": "是否被采取强制措施", "time": "发生时间", "location": "地点", "region": "地区", "goal": "希望达到的结果"}
+        facts = "；".join(f"{names.get(key, key)}：{value}" for key, value in consultation.intake_json.items())
+        context.insert(0, {"role": "user", "content": f"【咨询类型】{labels.get(consultation.category, '综合')}。【已采集信息】{facts}"})
     return attachments, context, consultation.version
 
 
@@ -178,9 +189,12 @@ def persist_message(db: Session, consultation: Consultation, actor: User, payloa
         created_at=now,
     )
     db.add_all([user_message, assistant_message])
-    consultation.topic = payload.topic
-    consultation.title = payload.prompt[:80]
-    consultation.risk_level = "high" if answer.risk else "normal"
+    if expected_version == 0:
+        consultation.topic = payload.topic
+        consultation.title = payload.prompt[:80]
+    # 风险等级只升不降：一次出现高风险信号，整段咨询保持高风险提示
+    if answer.risk:
+        consultation.risk_level = "high"
     consultation.updated_at = now
     record_audit(db, actor, "consultation.message", "consultation", consultation.id, request_id=request_id)
     commit_event(db, "consultation.message.created", "consultation", consultation.id, {"risk": answer.risk})
@@ -274,6 +288,11 @@ def create_summary(db: Session, consultation: Consultation, user_id: str, payloa
         "attachments": [item for message in user_messages for item in message.attachments_json],
         "request_draft": _generate_request_draft(consultation, messages, user_messages),
     }
+    domain = {"civil": "民事", "criminal": "刑事"}.get(consultation.category)
+    if domain:
+        draft = snapshot["request_draft"]
+        draft["domain"] = domain
+        draft["missing_fields"] = [name for name in draft.get("missing_fields", []) if name != "domain"]
     digest = stable_hash(snapshot)
     consent = db.query(Consent).filter_by(owner_id=user_id, source_id=consultation.id, scope=payload.scope, snapshot_hash=digest).first()
     if not consent:

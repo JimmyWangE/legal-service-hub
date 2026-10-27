@@ -22,6 +22,12 @@ def unread_count(db: Session = Depends(get_db), user=Depends(current_user)):
     return {"unread": db.query(Notification).filter_by(user_id=user.id, read_at=None).count()}
 
 
+@router.post("/read-all")
+def mark_all_read(db: Session = Depends(get_db), user=Depends(current_user)):
+    updated = db.query(Notification).filter_by(user_id=user.id, read_at=None).update({"read_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    return {"updated": updated}
+
+
 @router.post("/{notification_id}/read")
 def mark_read(notification_id: str, db: Session = Depends(get_db), user=Depends(current_user)):
     item = db.query(Notification).filter_by(id=notification_id, user_id=user.id).first()

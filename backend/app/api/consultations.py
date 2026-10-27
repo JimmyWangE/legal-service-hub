@@ -28,13 +28,25 @@ def require_model_ready(request: Request):
 
 @router.post("")
 def create(payload: ConsultationCreate, db: Session = Depends(get_db), user=Depends(current_user)):
-    return consultation_out(db, consultation.create(db, user.id, payload.topic, payload.title))
+    return consultation_out(db, consultation.create(db, user.id, payload.topic, payload.title, payload.category, payload.intake))
 
 
 @router.get("")
-def list_consultations(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), db: Session = Depends(get_db), user=Depends(current_user)):
-    items = db.query(Consultation).filter(Consultation.owner_id == user.id).order_by(Consultation.updated_at.desc()).offset(offset).limit(limit).all()
-    return [{"id": item.id, "topic": item.topic, "title": item.title, "status": item.status, "updated_at": item.updated_at, "created_at": item.created_at} for item in items]
+def list_consultations(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    category: str | None = Query(None, regex="^(civil|criminal|unsure)$"),
+    risk_level: str | None = Query(None, regex="^(normal|high)$"),
+    db: Session = Depends(get_db),
+    user=Depends(current_user)
+):
+    query = db.query(Consultation).filter(Consultation.owner_id == user.id)
+    if category:
+        query = query.filter(Consultation.category == category)
+    if risk_level:
+        query = query.filter(Consultation.risk_level == risk_level)
+    items = query.order_by(Consultation.updated_at.desc()).offset(offset).limit(limit).all()
+    return [{"id": item.id, "topic": item.topic, "category": item.category, "risk_level": item.risk_level, "title": item.title, "status": item.status, "updated_at": item.updated_at, "created_at": item.created_at} for item in items]
 
 
 @router.get("/{consultation_id}")

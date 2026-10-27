@@ -58,7 +58,21 @@ def init_db() -> None:
     from sqlalchemy import inspect, text
 
     # 开发库由 create_all 建表，不会补齐已有表的新列；预发布和生产走 Alembic 迁移。
-    for table, column, definition in (("users", "avatar_data", "TEXT"), ("chat_messages", "attachment_json", "JSON")):
+    for table, column, definition in (
+        ("users", "avatar_data", "TEXT"), ("chat_messages", "attachment_json", "JSON"),
+        ("orders", "deliverables", "TEXT NOT NULL DEFAULT ''"), ("orders", "days", "INTEGER NOT NULL DEFAULT 0"),
+        ("orders", "payment_terms", "TEXT NOT NULL DEFAULT ''"), ("orders", "client_confirmed_at", "TIMESTAMP"),
+        ("orders", "lawyer_confirmed_at", "TIMESTAMP"), ("orders", "closed_reason", "VARCHAR(500) NOT NULL DEFAULT ''"),
+        ("orders", "completed_at", "TIMESTAMP"), ("quotes", "payment_terms", "TEXT NOT NULL DEFAULT ''"),
+        ("consultations", "category", "VARCHAR(20) NOT NULL DEFAULT 'unsure'"), ("consultations", "intake_json", "JSON"),
+        ("after_sales_cases", "resolved_by", "VARCHAR(36)"), ("after_sales_cases", "resolved_at", "TIMESTAMP"),
+    ):
         if column not in {item["name"] for item in inspect(engine).get_columns(table)}:
             with engine.begin() as connection:
                 connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
+    legacy_index = next((item for item in inspect(engine).get_indexes("orders") if item["name"] == "ix_orders_request_id"), None)
+    if legacy_index and legacy_index["unique"]:
+        with engine.begin() as connection:
+            connection.execute(text("DROP INDEX ix_orders_request_id"))
+            connection.execute(text("CREATE INDEX ix_orders_request_id ON orders (request_id)"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_active_request_order ON orders (request_id) WHERE status <> 'cancelled'"))

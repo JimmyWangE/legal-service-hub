@@ -75,6 +75,10 @@ def test_order_payment_document_and_after_sales_flow():
         assert second_order.status_code == 200
         assert first_order.json()["id"] == second_order.json()["id"]
         order_id = first_order.json()["id"]
+        assert first_order.json()["status"] == "pending_confirm"
+        assert client.post(f"/api/v1/orders/{order_id}/payments", headers=auth(client_token), json={"amount": "1800", "provider": "stub"}).status_code == 409
+        assert client.post(f"/api/v1/orders/{order_id}/confirm", headers=auth(client_token)).json()["status"] == "pending_confirm"
+        assert client.post(f"/api/v1/orders/{order_id}/confirm", headers=auth(lawyer_token)).json()["status"] == "pending_payment"
 
         payment = client.post(f"/api/v1/orders/{order_id}/payments", headers={**auth(client_token), "Idempotency-Key": "pay-1"}, json={"amount": "1800", "provider": "stub"})
         assert payment.status_code == 200, payment.text

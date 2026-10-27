@@ -10,8 +10,8 @@ from app.api.serializers import case_out, order_out, payment_out, user_briefs
 from app.core.database import get_db
 from app.core.deps import current_user, idempotency_key, request_context
 from app.core.errors import require
-from app.models import AfterSalesCase, Delivery, Order, Payment, User
-from app.schemas import AfterSalesCreate, CaseResolve, DeliveryCreate, PaymentCreate, PaymentWebhook
+from app.models import AfterSalesCase, Delivery, Order, OrderReview, Payment, User
+from app.schemas import AfterSalesCreate, CaseResolve, DeliveryCreate, PaymentCreate, PaymentWebhook, ReasonBody, ReviewCreate
 from app.services import trade
 from app.services import payments
 from app.core.config import get_settings
@@ -23,10 +23,12 @@ verification_slots = BoundedSemaphore(8)
 
 
 @router.get("/orders")
-def list_orders(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), db: Session = Depends(get_db), user: User = Depends(current_user)):
+def list_orders(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), status: str | None = Query(default=None, max_length=120), db: Session = Depends(get_db), user: User = Depends(current_user)):
     query = db.query(Order)
     if not user.has_role("operator"):
         query = query.filter(or_(Order.client_id == user.id, Order.lawyer_id == user.id))
+    if status:
+        query = query.filter(Order.status.in_(status.split(",")))
     items = query.order_by(Order.created_at.desc()).offset(offset).limit(limit).all()
     people = user_briefs(db, [person for item in items for person in (item.client_id, item.lawyer_id)])
     return [order_out(item, people) for item in items]
@@ -36,6 +38,37 @@ def list_orders(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=10
 def get_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     order = trade.get_order(db, user, order_id)
     return order_out(order, user_briefs(db, [order.client_id, order.lawyer_id]))
+
+
+@router.post("/orders/{order_id}/confirm")
+def confirm_contract(order_id: str, db: Session = Depends(get_db), user: User = Depends(current_user), key: str | None = Depends(idempotency_key), context=Depends(request_context)):
+    order = trade.confirm_contract(db, user, order_id, context["request_id"])
+    return order_out(order, user_briefs(db, [order.client_id, order.lawyer_id]))
+
+
+@router.post("/orders/{order_id}/cancel")
+def cancel_order(order_id: str, payload: ReasonBody, db: Session = Depends(get_db), user: User = Depends(current_user), key: str | None = Depends(idempotency_key), context=Depends(request_context)):
+    order = trade.cancel_order(db, user, order_id, payload.reason, context["request_id"])
+    return order_out(order, user_briefs(db, [order.client_id, order.lawyer_id]))
+
+
+@router.get("/orders/{order_id}/reviews")
+def list_reviews(order_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    trade.get_order(db, user, order_id)
+    items = db.query(OrderReview).filter_by(order_id=order_id).order_by(OrderReview.created_at).all()
+    people = user_briefs(db, [item.author_id for item in items])
+    return [{"id": item.id, "author_id": item.author_id, "author_name": people.get(item.author_id, {}).get("name"), "target_id": item.target_id, "rating": item.rating, "content": item.content, "created_at": item.created_at} for item in items]
+
+
+@router.post("/orders/{order_id}/reviews")
+def create_review(order_id: str, payload: ReviewCreate, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    item = trade.create_review(db, user, order_id, payload, context["request_id"])
+    return {"id": item.id, "author_id": item.author_id, "author_name": user.name, "target_id": item.target_id, "rating": item.rating, "content": item.content, "created_at": item.created_at}
+
+
+@router.get("/orders/{order_id}/evidence")
+def evidence(order_id: str, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    return trade.evidence_package(db, user, order_id, context["request_id"])
 
 
 @router.post("/orders/{order_id}/payments")
@@ -115,7 +148,7 @@ def delivery(order_id: str, payload: DeliveryCreate, db: Session = Depends(get_d
 @router.get("/orders/{order_id}/deliveries")
 def deliveries(order_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     trade.get_order(db, user, order_id)
-    return [{"id": item.id, "document_id": item.document_id, "status": item.status, "created_at": item.created_at} for item in db.query(Delivery).filter_by(order_id=order_id).order_by(Delivery.created_at.desc()).limit(100).all()]
+    return [{"id": item.id, "document_id": item.document_id, "status": item.status, "note": item.reason, "created_at": item.created_at} for item in db.query(Delivery).filter_by(order_id=order_id).order_by(Delivery.created_at.desc()).limit(100).all()]
 
 
 @router.get("/orders/{order_id}/after-sales")
@@ -135,11 +168,20 @@ def after_sales(order_id: str, payload: AfterSalesCreate, db: Session = Depends(
 
 
 @router.get("/admin/cases")
-def list_cases(db: Session = Depends(get_db), user: User = Depends(current_user)):
+def list_cases(status: str | None = Query(default=None, max_length=30), db: Session = Depends(get_db), user: User = Depends(current_user)):
     require(user.has_role("operator"), "只有运营人员可以查看售后案件", 403, "forbidden")
-    return [case_out(item) for item in db.query(AfterSalesCase).order_by(AfterSalesCase.created_at.desc()).limit(100).all()]
+    query = db.query(AfterSalesCase)
+    if status:
+        query = query.filter_by(status=status)
+    items = query.order_by(AfterSalesCase.created_at.desc()).limit(100).all()
+    orders = {order.id: order for order in db.query(Order).filter(Order.id.in_([item.order_id for item in items])).all()} if items else {}
+    people = user_briefs(db, [person for order in orders.values() for person in (order.client_id, order.lawyer_id)] + [item.created_by for item in items])
+    def enrich(item):
+        order = orders.get(item.order_id)
+        return {**case_out(item), "order_title": order.title if order else "", "order_paid": order.paid if order else 0, "client_name": people.get(order.client_id, {}).get("name") if order else None, "lawyer_name": people.get(order.lawyer_id, {}).get("name") if order else None, "creator_name": people.get(item.created_by, {}).get("name")}
+    return [enrich(item) for item in items]
 
 
 @router.post("/admin/cases/{case_id}/resolve")
 def resolve_case(case_id: str, payload: CaseResolve, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
-    return case_out(trade.resolve_case(db, user, case_id, payload.decision, payload.resolution, context["request_id"]))
+    return case_out(trade.resolve_case(db, user, case_id, payload.decision, payload.resolution, context["request_id"], payload.amount))

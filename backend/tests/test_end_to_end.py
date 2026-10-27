@@ -185,7 +185,9 @@ def test_complete_platform_business_chain():
         replay_order = json_response(client.post(f"/api/v1/quotes/{quote_id}/accept", headers=idempotency_headers))
         assert first_order["id"] == replay_order["id"]
         order_id = first_order["id"]
-        assert first_order["status"] == "pending_payment"
+        assert first_order["status"] == "pending_confirm"
+        json_response(client.post(f"/api/v1/orders/{order_id}/confirm", headers=auth(client_token)))
+        assert json_response(client.post(f"/api/v1/orders/{order_id}/confirm", headers=auth(lawyer_token)))["status"] == "pending_payment"
 
         payment_headers = {**auth(client_token), "Idempotency-Key": "e2e-create-payment"}
         first_payment = json_response(
@@ -213,7 +215,8 @@ def test_complete_platform_business_chain():
 
         documents = json_response(client.get("/api/v1/documents", headers=auth(client_token)))
         contract = next(item for item in documents if item["order_id"] == order_id)
-        document_id = contract["id"]
+        assert contract["doc_type"] == "service_contract" and contract["status"] == "confirmed"
+        document_id = json_response(client.post("/api/v1/documents", headers=auth(lawyer_token), json={"order_id": order_id, "title": "E2E法律意见书", "doc_type": "legal_document", "body": "E2E第一版正文"}))["id"]
         assert json_response(client.get(f"/api/v1/documents/{document_id}", headers=auth(lawyer_token)))["id"] == document_id
         version = json_response(
             client.post(
@@ -282,18 +285,18 @@ def test_complete_platform_business_chain():
         assert completed["status"] == "completed"
         json_response(
             client.post(
-                f"/api/v1/documents/{document_id}/access/L1/revoke",
-                headers=auth(client_token),
+                f"/api/v1/documents/{document_id}/access/C1/revoke",
+                headers=auth(lawyer_token),
             )
         )
-        assert client.get(f"/api/v1/files/{uploaded['id']}", headers=auth(lawyer_token)).status_code == 403
+        assert client.get(f"/api/v1/files/{uploaded['id']}", headers=auth(client_token)).status_code == 403
         assert client.post(
             "/api/v1/files",
-            headers=auth(lawyer_token),
+            headers=auth(client_token),
             data={"document_id": document_id},
             files={"file": ("revoked.txt", b"blocked", "text/plain")},
         ).status_code == 403
-        assert client.get(f"/api/v1/files/{uploaded['id']}", headers=auth(client_token)).status_code == 200
+        assert client.get(f"/api/v1/files/{uploaded['id']}", headers=auth(lawyer_token)).status_code == 200
         case = json_response(
             client.post(
                 f"/api/v1/orders/{order_id}/after-sales",

@@ -67,6 +67,8 @@ class Consultation(Base):
     topic: Mapped[str] = mapped_column(String(80), default="综合咨询")
     title: Mapped[str] = mapped_column(String(200), default="新的法律咨询")
     status: Mapped[str] = mapped_column(String(30), default="active")
+    category: Mapped[str] = mapped_column(String(20), default="unsure")
+    intake_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     risk_level: Mapped[str] = mapped_column(String(20), default="normal")
     summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=0)
@@ -141,6 +143,7 @@ class Quote(Base):
     deliverables: Mapped[str] = mapped_column(Text)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     days: Mapped[int] = mapped_column(Integer)
+    payment_terms: Mapped[str] = mapped_column(Text, default="")
     valid_until: Mapped[date] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(30), default="valid", index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -151,7 +154,7 @@ class Quote(Base):
 class Order(Base):
     __tablename__ = "orders"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    request_id: Mapped[str] = mapped_column(ForeignKey("service_requests.id"), unique=True, index=True)
+    request_id: Mapped[str] = mapped_column(ForeignKey("service_requests.id"), index=True)
     quote_id: Mapped[str] = mapped_column(ForeignKey("quotes.id"), unique=True)
     client_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     lawyer_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
@@ -162,9 +165,17 @@ class Order(Base):
     status: Mapped[str] = mapped_column(String(30), default="pending_payment", index=True)
     payment_status: Mapped[str] = mapped_column(String(30), default="unpaid")
     settlement_status: Mapped[str] = mapped_column(String(30), default="frozen")
+    deliverables: Mapped[str] = mapped_column(Text, default="")
+    days: Mapped[int] = mapped_column(Integer, default=0)
+    payment_terms: Mapped[str] = mapped_column(Text, default="")
+    client_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lawyer_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_reason: Mapped[str] = mapped_column(String(500), default="")
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    __table_args__ = (Index("uq_active_request_order", "request_id", unique=True, postgresql_where=text("status <> 'cancelled'"), sqlite_where=text("status <> 'cancelled'")),)
 
 
 class Payment(Base):
@@ -295,7 +306,21 @@ class AfterSalesCase(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     resolution: Mapped[str] = mapped_column(String(2000), default="")
+    resolved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OrderReview(Base):
+    __tablename__ = "order_reviews"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)
+    author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    target_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    rating: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(String(1000), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint("order_id", "author_id", name="uq_order_review_author"),)
 
 
 class AuditLog(Base):
