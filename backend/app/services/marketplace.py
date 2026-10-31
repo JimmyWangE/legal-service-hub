@@ -10,6 +10,8 @@ from app.models import (
     Document,
     DocumentVersion,
     LawyerProfile,
+    LawyerService,
+    Notification,
     Order,
     OrderReview,
     Quote,
@@ -17,8 +19,12 @@ from app.models import (
     StoredFile,
     User,
 )
-from app.schemas import QuoteCreate, RequestCreate, RequestUpdate
-from app.services.common import commit_event, new_id, notify, record_audit, stable_hash
+from app.schemas import LawyerProfileUpdate, LawyerServiceIn, QuoteCreate, RequestCreate, RequestUpdate, ServicePurchase
+from app.services.common import commit_event, money, new_id, notify, record_audit, stable_hash
+
+PUBLIC_VISIBILITY = "认证律师可见"
+DIRECT_VISIBILITY = "定向委托"
+CRIMINAL_FIELDS = {"刑事辩护", "刑事控告"}
 
 
 def create_request(db: Session, user: User, payload: RequestCreate, request_id: str = "") -> ServiceRequest:
@@ -81,7 +87,7 @@ def visible_requests(db: Session, user: User, offset=0, limit=50, filters: dict 
     if not user.has_role("operator"):
         profile = db.get(LawyerProfile, user.id)
         if active_lawyer(user, profile):
-            query = query.filter(or_(ServiceRequest.owner_id == user.id, (ServiceRequest.visibility == "认证律师可见") & (ServiceRequest.status == "quoting")))
+            query = query.filter(or_(ServiceRequest.owner_id == user.id, (ServiceRequest.visibility == PUBLIC_VISIBILITY) & (ServiceRequest.status == "quoting") & (ServiceRequest.deadline >= date.today())))
         else:
             query = query.filter(ServiceRequest.owner_id == user.id)
     for name, value in (filters or {}).items():
@@ -168,7 +174,8 @@ def lawyer_stats(db: Session, lawyer_ids: list[str]) -> dict:
     if not lawyer_ids:
         return {}
     ratings = dict.fromkeys(lawyer_ids)
-    rows = db.query(OrderReview.target_id, func.avg(OrderReview.rating), func.count(OrderReview.id)).filter(OrderReview.target_id.in_(lawyer_ids)).group_by(OrderReview.target_id).all()
+    # 只统计“当事人评价承办律师”：律师账户也可能以当事人身份下单，那时收到的评价不能计入律师评分
+    rows = db.query(OrderReview.target_id, func.avg(OrderReview.rating), func.count(OrderReview.id)).join(Order, Order.id == OrderReview.order_id).filter(OrderReview.target_id.in_(lawyer_ids), Order.lawyer_id == OrderReview.target_id).group_by(OrderReview.target_id).all()
     completed = dict(db.query(Order.lawyer_id, func.count(Order.id)).filter(Order.lawyer_id.in_(lawyer_ids), Order.status == "completed").group_by(Order.lawyer_id).all())
     by_target = {target: (avg, count) for target, avg, count in rows}
     for lawyer_id in ratings:
@@ -187,14 +194,15 @@ def list_lawyers(db: Session, field: str | None, region: str | None, available_o
     query = db.query(LawyerProfile, User).join(User, User.id == LawyerProfile.user_id).filter(LawyerProfile.status == "approved", LawyerProfile.expires_on >= date.today(), User.is_active.is_(True), User.id.in_(db.query(UserRole.user_id).filter_by(role="lawyer")))
     if available_only:
         query = query.filter(LawyerProfile.available.is_(True))
-    if field:
-        query = query.filter(LawyerProfile.field == field)
     if region:
-        query = query.filter(LawyerProfile.region == region)
+        query = query.filter(or_(LawyerProfile.region == region, LawyerProfile.region == "全国"))
     if keyword:
         like = f"%{keyword.strip()[:50]}%"
-        query = query.filter(or_(User.name.like(like), LawyerProfile.firm.like(like), LawyerProfile.field.like(like)))
-    return query.order_by(LawyerProfile.created_at.desc()).limit(100).all()
+        query = query.filter(or_(User.name.like(like), LawyerProfile.firm.like(like), LawyerProfile.field.like(like), LawyerProfile.bio.like(like)))
+    rows = query.order_by(LawyerProfile.created_at.desc()).limit(200).all()
+    if field:
+        rows = [(profile, user) for profile, user in rows if profile.field == field or field in (profile.specialties or [])]
+    return rows[:100]
 
 
 def create_quote(db: Session, user: User, request_id: str, payload: QuoteCreate, request_context: str = "") -> Quote:
@@ -205,6 +213,8 @@ def create_quote(db: Session, user: User, request_id: str, payload: QuoteCreate,
     require(active_lawyer(user, profile), "律师资质或接单状态不可用", 403, "lawyer_unavailable")
     require(request.owner_id != user.id, "不能对本人需求报价", 403, "self_quote_forbidden")
     require(request.status == "quoting", "当前需求不接受报价", 409, "invalid_state")
+    require(request.visibility == PUBLIC_VISIBILITY, "该需求为定向委托，不接受其他律师报价", 403, "forbidden")
+    require(request.deadline >= date.today(), "需求已超过期望完成日期，不再接受报价", 409, "request_expired")
     require(payload.valid_until >= date.today(), "报价有效期必须在未来", 422, "invalid_quote")
     expire_stale_quotes(db, request_id)
     existing = db.query(Quote).filter_by(request_id=request_id, lawyer_id=user.id).filter(Quote.status == "valid").first()
@@ -273,11 +283,15 @@ def accept_quote(db: Session, user: User, quote_id: str, request_id: str = "") -
 
 
 def contract_body(request: ServiceRequest, quote: Quote, client: User, lawyer: User) -> str:
+    from app.core.config import get_settings
+
+    settings = get_settings()
     return "\n".join([
         f"《{request.title}》法律服务合同",
         "",
         f"委托人（甲方）：{client.name}",
         f"受托律师（乙方）：{lawyer.name if lawyer else ''}",
+        f"服务地区：{request.region}    服务类型：{request.service_type}",
         "",
         "一、服务范围",
         quote.scope,
@@ -285,9 +299,153 @@ def contract_body(request: ServiceRequest, quote: Quote, client: User, lawyer: U
         "二、交付物",
         quote.deliverables,
         "",
-        f"三、服务期限：自付款确认之日起 {quote.days} 日内完成交付。",
-        f"四、服务费用：人民币 {quote.price} 元。",
+        f"三、服务期限：自甲方付款经平台确认之日起 {quote.days} 日内完成交付。因甲方未及时提供必要材料导致的延误，期限相应顺延。",
+        f"四、服务费用：人民币 {quote.price} 元（含税），由甲方通过平台支付，平台在订单完成且售后期届满后向乙方结算。",
         f"五、付款方式：{quote.payment_terms or '签署确认后一次性支付'}。",
-        "六、双方确认：本合同经甲乙双方在平台内确认后生效；平台内“确认”不等同于电子签名。",
-        "七、售后：交付后甲方可确认收悉或退回修改；如有争议可申请平台介入处理。",
+        "",
+        "六、双方权利义务",
+        "1. 甲方应如实陈述事实、提供真实完整的材料，并对材料的真实性负责；",
+        "2. 乙方应勤勉尽责、依法依规提供服务，按约定期限交付，并就服务进展与甲方保持沟通；",
+        "3. 乙方不得向甲方承诺案件结果，不得私下收取约定以外的任何费用。",
+        "",
+        "七、保密：乙方对执业中知悉的甲方个人信息、商业秘密及案件信息负有保密义务，法律另有规定的除外。",
+        "",
+        f"八、验收：乙方提交交付物后，甲方可确认验收或说明理由退回修改；甲方 {settings.delivery_auto_accept_days} 日内未处理的，视为验收通过。",
+        f"九、解除与退款：甲方付款前任何一方均可取消订单；付款后如需退款，甲方可在订单完成后 {settings.after_sales_window_days} 日内向平台申请，由平台依据服务完成情况核实处理。",
+        "十、争议解决：双方发生争议应先协商，可申请平台介入调解；协商不成的，任何一方可向有管辖权的人民法院提起诉讼。",
+        "",
+        "十一、其他：本合同经甲乙双方在平台内确认后生效；平台内“确认”不等同于电子签名。平台提供信息撮合与履约保障服务，不是本合同的服务提供方。",
     ])
+
+
+def expire_overdue_requests(db: Session) -> int:
+    """超过期望完成日期仍未下单的公开需求自动过期，相关有效报价同步失效。"""
+    overdue = db.query(ServiceRequest).filter(ServiceRequest.status == "quoting", ServiceRequest.deadline < date.today()).with_for_update().all()
+    for request in overdue:
+        request.status = "expired"
+        request.version += 1
+        for quote in db.query(Quote).filter_by(request_id=request.id, status="valid").all():
+            quote.status = "expired"
+            quote.version += 1
+        notify(db, request.owner_id, "需求已过期", f"需求“{request.title}”已超过期望完成日期，可修改日期后重新开放报价", "request", request.id)
+        record_audit(db, None, "request.expired", "request", request.id)
+    if overdue:
+        db.flush()
+    return len(overdue)
+
+
+def reopen_request(db: Session, user: User, request_id: str, deadline: date, request_context: str = "") -> ServiceRequest:
+    request = db.query(ServiceRequest).filter_by(id=request_id).with_for_update().first()
+    require(request is not None, "需求不存在", 404, "not_found")
+    require(request.owner_id == user.id, "只能重新开放本人发布的需求", 403, "forbidden")
+    require(request.status in ("expired", "closed"), "只有已过期或已关闭的需求可以重新开放", 409, "invalid_state")
+    require(request.visibility == PUBLIC_VISIBILITY, "定向委托需求请重新选择服务套餐", 409, "invalid_state")
+    require(deadline >= date.today(), "期望截止日期不能早于今天", 422, "invalid_deadline")
+    request.deadline = deadline
+    request.status = "quoting"
+    request.version += 1
+    record_audit(db, user, "request.reopened", "request", request.id, {"deadline": str(deadline)}, request_context)
+    commit_event(db, "request.created", "request", request.id, {"owner_id": user.id, "reopened": True})
+    db.flush()
+    return request
+
+
+def quote_counts(db: Session, request_ids: list[str]) -> dict[str, int]:
+    if not request_ids:
+        return {}
+    return dict(db.query(Quote.request_id, func.count(Quote.id)).filter(Quote.request_id.in_(request_ids), Quote.status.in_(["valid", "accepted"])).group_by(Quote.request_id).all())
+
+
+def invite_lawyer(db: Session, user: User, request_id: str, lawyer_id: str, request_context: str = "") -> None:
+    request = db.get(ServiceRequest, request_id)
+    require(request is not None and request.owner_id == user.id, "只能邀请律师为本人的需求报价", 403, "forbidden")
+    require(request.status == "quoting" and request.deadline >= date.today(), "需求当前不接受报价", 409, "invalid_state")
+    require(request.visibility == PUBLIC_VISIBILITY, "定向委托需求无需邀请", 409, "invalid_state")
+    lawyer = db.get(User, lawyer_id)
+    require(lawyer is not None and lawyer.id != user.id and active_lawyer(lawyer, db.get(LawyerProfile, lawyer_id)), "该律师当前无法接单", 409, "lawyer_unavailable")
+    require(db.query(Quote.id).filter_by(request_id=request.id, lawyer_id=lawyer_id, status="valid").first() is None, "该律师已对此需求报价", 409, "already_quoted")
+    title = "当事人邀请您报价"
+    require(db.query(Notification.id).filter_by(user_id=lawyer_id, object_type="request", object_id=request.id, title=title).first() is None, "已邀请过该律师，请耐心等待报价", 409, "already_invited")
+    notify(db, lawyer_id, title, f"{user.name}邀请您为需求“{request.title}”（{request.region} · {request.service_type}，预算{money(request.budget)}元）提交报价", "request", request.id)
+    record_audit(db, user, "request.invited", "request", request.id, {"lawyer_id": lawyer_id}, request_context)
+
+
+def my_quotes(db: Session, user: User, limit: int = 100) -> list[tuple[Quote, ServiceRequest]]:
+    require(user.has_role("lawyer"), "只有律师可以查看报价记录", 403, "forbidden")
+    expire_stale_quotes(db)
+    return db.query(Quote, ServiceRequest).join(ServiceRequest, ServiceRequest.id == Quote.request_id).filter(Quote.lawyer_id == user.id).order_by(Quote.created_at.desc()).limit(limit).all()
+
+
+def update_lawyer_profile(db: Session, user: User, payload: LawyerProfileUpdate, request_context: str = "") -> LawyerProfile:
+    """律师可自行维护展示资料与接单状态；执业证号、律所等资质字段只能通过重新提交入驻申请变更。"""
+    profile = db.query(LawyerProfile).filter_by(user_id=user.id).with_for_update().first()
+    require(profile is not None and user.has_role("lawyer"), "请先完成律师入驻", 404, "not_found")
+    require(profile.status == "approved" or not payload.available, "资质未生效或已冻结，暂不能开启接单", 409, "invalid_state")
+    profile.bio = payload.bio.strip()
+    profile.practice_years = payload.practice_years
+    profile.specialties = list(dict.fromkeys(item for item in payload.specialties if item and item != profile.field))[:6]
+    profile.mode = payload.mode
+    if profile.available and not payload.available:
+        db.query(Quote).filter_by(lawyer_id=user.id, status="valid").update({"status": "withdrawn", "version": Quote.version + 1}, synchronize_session=False)
+    profile.available = payload.available
+    record_audit(db, user, "lawyer.profile.updated", "lawyer", user.id, {"available": payload.available}, request_context)
+    db.flush()
+    return profile
+
+
+def services_of(db: Session, lawyer_id: str, include_inactive: bool = False) -> list[LawyerService]:
+    query = db.query(LawyerService).filter_by(lawyer_id=lawyer_id)
+    if not include_inactive:
+        query = query.filter(LawyerService.active.is_(True))
+    return query.order_by(LawyerService.active.desc(), LawyerService.price).limit(50).all()
+
+
+def save_service(db: Session, user: User, payload: LawyerServiceIn, service_id: str | None = None, request_context: str = "") -> LawyerService:
+    profile = db.get(LawyerProfile, user.id)
+    require(user.has_role("lawyer") and profile is not None and profile.status == "approved", "资质审核通过后才能上架服务", 403, "forbidden")
+    if service_id:
+        service = db.query(LawyerService).filter_by(id=service_id).with_for_update().first()
+        require(service is not None and service.lawyer_id == user.id, "服务不存在", 404, "not_found")
+    else:
+        require(db.query(LawyerService).filter_by(lawyer_id=user.id, active=True).count() < 12, "最多同时上架12个服务", 409, "too_many_services")
+        service = LawyerService(id=new_id(), lawyer_id=user.id)
+        db.add(service)
+    for name in ("title", "service_type", "field", "description", "deliverables", "price", "days", "active"):
+        setattr(service, name, getattr(payload, name))
+    record_audit(db, user, "lawyer.service.saved", "lawyer_service", service.id, {"price": str(payload.price), "active": payload.active}, request_context)
+    db.flush()
+    db.refresh(service)
+    return service
+
+
+def purchase_service(db: Session, user: User, service_id: str, payload: ServicePurchase, request_context: str = "") -> Order:
+    """一口价委托：以套餐生成定向需求与律师报价，再走与普通报价相同的接受流程（合同确认 → 支付 → 履约）。"""
+    require(user.has_role("client"), "只有当事人可以委托服务", 403, "forbidden")
+    service = db.get(LawyerService, service_id)
+    require(service is not None and service.active, "该服务已下架", 404, "not_found")
+    require(service.lawyer_id != user.id, "不能购买本人上架的服务", 403, "self_quote_forbidden")
+    lawyer = db.get(User, service.lawyer_id)
+    require(active_lawyer(lawyer, db.get(LawyerProfile, service.lawyer_id)), "律师暂停接单，请稍后再试或选择其他律师", 409, "lawyer_unavailable")
+    attachments = request_attachments(db, user, payload.attachment_file_ids)
+    today = date.today()
+    from datetime import timedelta
+
+    request = ServiceRequest(
+        id=new_id(), owner_id=user.id, title=service.title, domain="刑事" if service.field in CRIMINAL_FIELDS else "民事",
+        field=service.field, service_type=service.service_type, facts=payload.facts, attachments_json=attachments,
+        region=payload.region, budget=service.price, deadline=today + timedelta(days=service.days + 7),
+        deliverables=service.deliverables, visibility=DIRECT_VISIBILITY, service_id=service.id, status="quoting",
+    )
+    db.add(request)
+    db.flush()
+    quote = Quote(
+        id=new_id(), request_id=request.id, lawyer_id=service.lawyer_id, scope=service.description,
+        deliverables=service.deliverables, price=service.price, days=service.days,
+        payment_terms="确认合同后一次性支付", valid_until=today + timedelta(days=3), status="valid",
+    )
+    db.add(quote)
+    record_audit(db, user, "request.created", "request", request.id, {"service_id": service.id}, request_context)
+    db.flush()
+    order = accept_quote(db, user, quote.id, request_context)
+    service.sold += 1
+    return order

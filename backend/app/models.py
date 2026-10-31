@@ -56,6 +56,9 @@ class LawyerProfile(Base):
     status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     available: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     approved_application_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    bio: Mapped[str] = mapped_column(Text, default="")
+    practice_years: Mapped[int] = mapped_column(Integer, default=0)
+    specialties: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (Index("uq_approved_lawyer_license", "license_number", unique=True, postgresql_where=text("status = 'approved' AND license_number <> ''"), sqlite_where=text("status = 'approved' AND license_number <> ''")),)
 
@@ -130,6 +133,7 @@ class ServiceRequest(Base):
     deadline: Mapped[date] = mapped_column(Date)
     deliverables: Mapped[str] = mapped_column(Text)
     visibility: Mapped[str] = mapped_column(String(50), default="认证律师可见")
+    service_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(30), default="quoting", index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -150,6 +154,24 @@ class Quote(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (Index("uq_active_lawyer_quote", "request_id", "lawyer_id", unique=True, postgresql_where=text("status = 'valid'"), sqlite_where=text("status = 'valid'")),)
+
+
+class LawyerService(Base):
+    """律师上架的标准化服务套餐：明码标价，当事人可直接委托，免去发布需求等待报价。"""
+    __tablename__ = "lawyer_services"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    lawyer_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(100))
+    service_type: Mapped[str] = mapped_column(String(100))
+    field: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str] = mapped_column(Text)
+    deliverables: Mapped[str] = mapped_column(Text)
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    days: Mapped[int] = mapped_column(Integer)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    sold: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Order(Base):
@@ -173,6 +195,9 @@ class Order(Base):
     lawyer_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_reason: Mapped[str] = mapped_column(String(500), default="")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    service_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    platform_fee: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

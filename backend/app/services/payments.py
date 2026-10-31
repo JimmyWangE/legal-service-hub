@@ -127,7 +127,9 @@ def book_event(db, event):
     else:
         order.paid = money(order.paid) + payment.amount
         order.payment_status = "paid"
-        order.status = "service" if order.status == "pending_payment" else order.status
+        if order.status == "pending_payment":
+            order.status = "service"
+            order.service_started_at = datetime.now(timezone.utc)
         order.version += 1
         notify(db, order.client_id, "支付已确认", "资金状态已由支付机构确认", "order", order.id)
         notify(db, order.lawyer_id, "订单已支付", "订单可以开始履约", "order", order.id)

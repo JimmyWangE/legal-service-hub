@@ -11,6 +11,12 @@ from app.schemas import AfterSalesCreate, DeliveryCreate, PaymentCreate, Payment
 from app.services.common import commit_event, money, new_id, notify, record_audit, stable_hash
 from app.services.payment_provider import get_payment_provider
 
+DIRECT_VISIBILITY = "定向委托"
+
+
+def aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
 
 def get_order(db: Session, user: User, order_id: str, lock: bool = False) -> Order:
     query = db.query(Order).filter(Order.id == order_id)
@@ -31,6 +37,11 @@ def create_payment(db: Session, user: User, order_id: str, payload: PaymentCreat
     require(amount == due, "支付金额必须等于应付金额", 422, "invalid_amount")
     provider = get_payment_provider(payload.provider)
     existing = db.query(Payment).filter(Payment.order_id == order.id, Payment.status.in_(["creating", "created", "pending"])).first()
+    if existing and existing.provider == "stub" and existing.expires_at and aware(existing.expires_at) <= datetime.now(timezone.utc):
+        # 过期的模拟支付单不会被渠道回调关闭，必须在此关闭，否则当事人永远拿到同一张过期单无法付款
+        existing.status = "closed"
+        db.flush()
+        existing = None
     if existing:
         if provider.name == "stub" and not existing.client_params.get("qr_svg_base64"):
             existing.client_params = provider.create_intent(existing, order.title)
@@ -77,11 +88,11 @@ def receive_delivery(db: Session, user: User, order_id: str, accepted: bool, rea
     require(user.id == order.client_id, "只有当事人可以确认交付", 403, "forbidden")
     require(order.status == "pending_receipt", "订单当前没有待确认交付物", 409, "invalid_state")
     if accepted:
-        order.status = "completed"
-        order.settlement_status = "pending"
-        order.completed_at = datetime.now(timezone.utc)
+        complete_order(db, order, user, reason, request_id)
         notify(db, order.lawyer_id, "交付已确认", f"订单“{order.title}”已完成", "order", order.id)
-        action = "delivery.received"
+        db.flush()
+        db.refresh(order)
+        return order
     else:
         require(reason.strip(), "退回交付物必须填写原因", 422, "reason_required")
         order.status = "service"
@@ -105,10 +116,10 @@ def open_case(db: Session, user: User, order_id: str, payload: AfterSalesCreate,
     require(payload.case_type == "dispute" or user.id == order.client_id, "只有当事人可以申请退款", 403, "forbidden")
     require(money(order.paid) > 0, "订单尚未支付，可直接取消订单", 409, "invalid_state")
     require(order.status in ("service", "pending_receipt", "completed"), "订单当前不可新建售后", 409, "invalid_state")
+    require(order.settlement_status != "settled", "订单已完成结算，如有问题请联系平台客服", 409, "after_sales_expired")
     if order.status == "completed" and order.completed_at:
         window = timedelta(days=get_settings().after_sales_window_days)
-        completed_at = order.completed_at if order.completed_at.tzinfo else order.completed_at.replace(tzinfo=timezone.utc)
-        require(datetime.now(timezone.utc) - completed_at <= window, f"订单完成已超过{window.days}天，无法再申请售后", 409, "after_sales_expired")
+        require(datetime.now(timezone.utc) - aware(order.completed_at) <= window, f"订单完成已超过{window.days}天，无法再申请售后", 409, "after_sales_expired")
     amount = money(payload.amount)
     require(payload.case_type == "refund" or user.id == order.client_id or amount == 0, "律师发起争议不涉及退款金额", 422, "invalid_amount")
     require(payload.case_type != "refund" or amount > 0, "退款金额必须大于0", 422, "invalid_amount")
@@ -250,7 +261,8 @@ def cancel_order(db: Session, user: User, order_id: str, reason: str = "", reque
         quote.version += 1
     request = db.query(ServiceRequest).filter_by(id=order.request_id).with_for_update().first()
     if request and request.status == "ordered":
-        request.status = "quoting"
+        # 定向委托（服务套餐）只面向一位律师，取消后关闭需求，避免出现无人可见的“报价中”需求
+        request.status = "closed" if request.visibility == DIRECT_VISIBILITY else "quoting"
         request.version += 1
     for document in db.query(Document).filter_by(order_id=order.id).all():
         if document.status in ("draft", "returned", "signing"):
@@ -309,3 +321,77 @@ def evidence_package(db: Session, user: User, order_id: str, request_id: str = "
     package["package_sha256"] = stable_hash(package)
     record_audit(db, user, "order.evidence.exported", "order", order.id, {"package_sha256": package["package_sha256"]}, request_id)
     return package
+
+
+def complete_order(db: Session, order: Order, actor: User | None, reason: str = "", request_id: str = "") -> None:
+    order.status = "completed"
+    order.settlement_status = "pending"
+    order.completed_at = datetime.now(timezone.utc)
+    order.version += 1
+    delivery = db.query(Delivery).filter_by(order_id=order.id, status="submitted").order_by(Delivery.created_at.desc()).first()
+    if delivery:
+        delivery.status = "accepted"
+        delivery.reason = reason
+    record_audit(db, actor, "delivery.received" if actor else "delivery.auto_accepted", "order", order.id, {"reason": reason}, request_id)
+    commit_event(db, "delivery.received", "order", order.id, {"auto": actor is None})
+
+
+def auto_accept_deliveries(db: Session, now: datetime | None = None) -> int:
+    """当事人超过约定天数未验收的交付，系统自动确认，避免律师的劳动成果被无限期挂起。"""
+    now = now or datetime.now(timezone.utc)
+    days = get_settings().delivery_auto_accept_days
+    count = 0
+    for order in db.query(Order).filter(Order.status == "pending_receipt").with_for_update().all():
+        delivery = db.query(Delivery).filter_by(order_id=order.id, status="submitted").order_by(Delivery.created_at.desc()).first()
+        if not delivery or now - aware(delivery.created_at) < timedelta(days=days):
+            continue
+        complete_order(db, order, None, f"当事人{days}天内未处理，系统自动确认验收")
+        notify(db, order.client_id, "交付已自动确认", f"订单“{order.title}”的交付物超过{days}天未处理，系统已自动确认验收；如有异议可在售后期内申请售后", "order", order.id)
+        notify(db, order.lawyer_id, "交付已自动确认", f"订单“{order.title}”已由系统自动确认验收", "order", order.id)
+        count += 1
+    db.flush()
+    return count
+
+
+def settle_orders(db: Session, now: datetime | None = None) -> int:
+    """售后期结束且无待处理售后的已完成订单进入结算，按平台服务费率计算律师应得金额。"""
+    now = now or datetime.now(timezone.utc)
+    settings = get_settings()
+    window = timedelta(days=settings.after_sales_window_days)
+    count = 0
+    candidates = db.query(Order).filter(Order.status == "completed", Order.settlement_status.in_(["pending", "partially_refunded"]), Order.completed_at.is_not(None)).with_for_update().all()
+    for order in candidates:
+        if now - aware(order.completed_at) < window:
+            continue
+        if db.query(AfterSalesCase.id).filter(AfterSalesCase.order_id == order.id, AfterSalesCase.status.in_(["pending", "refund_processing"])).first():
+            continue
+        refunded = sum((money(item.refunded) for item in db.query(Payment).filter_by(order_id=order.id).all()), Decimal("0"))
+        net = max(money(order.paid) - refunded, Decimal("0"))
+        order.platform_fee = money(net * Decimal(str(settings.platform_fee_rate)))
+        order.settlement_status = "settled"
+        order.settled_at = now
+        order.version += 1
+        notify(db, order.lawyer_id, "订单已结算", f"订单“{order.title}”已结算，服务收入 {money(net - order.platform_fee)} 元（已扣除平台服务费 {order.platform_fee} 元）", "order", order.id)
+        record_audit(db, None, "order.settled", "order", order.id, {"net": str(net), "platform_fee": str(order.platform_fee)})
+        commit_event(db, "order.settled", "order", order.id, {"platform_fee": str(order.platform_fee)})
+        count += 1
+    db.flush()
+    return count
+
+
+def overdue_reminders(db: Session, now: datetime | None = None) -> int:
+    """服务中的订单超过约定交付期时，提醒律师与当事人各一次。"""
+    from app.models import Notification
+
+    now = now or datetime.now(timezone.utc)
+    count = 0
+    for order in db.query(Order).filter(Order.status == "service", Order.service_started_at.is_not(None), Order.days > 0).all():
+        if now < aware(order.service_started_at) + timedelta(days=order.days):
+            continue
+        if db.query(Notification.id).filter_by(user_id=order.lawyer_id, object_type="order_overdue", object_id=order.id).first():
+            continue
+        notify(db, order.lawyer_id, "订单已超过约定交付期", f"订单“{order.title}”已超过约定的{order.days}天交付期，请尽快提交交付物或与当事人沟通", "order_overdue", order.id)
+        notify(db, order.client_id, "律师交付已逾期", f"订单“{order.title}”已超过约定交付期，可联系律师了解进度；如需退款可申请售后", "order", order.id)
+        count += 1
+    db.flush()
+    return count

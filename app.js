@@ -8,12 +8,15 @@ import { renderWorkbench, setGuideTab, toggleGuide } from "./guide.js";
 import { createModelConsultation } from "./model-consultation.js";
 import { bindRequestAttachments, renderRequestAttachments, requestAttachmentField, uploadRequestAttachments } from "./request-attachments.js";
 import { renderOrderCards, renderOrderDetail, renderOrderList, setOrderFilter, setOrderQuery } from "./orders-view.js";
-import { avatar, button, date, empty, esc, field, formData, icon, money, status } from "./ui.js";
+import { renderLawyerCards, renderLawyerDirectory, renderRequestCards, renderRequestDetail, renderRequestList, requestFormBody, setRequestFilter } from "./requests-view.js";
+import { renderAuditPage, renderCasesPage, renderNotifications, renderPaymentOps, renderReviewPage, setAdminFilter } from "./admin-view.js";
+import { acceptQuoteBody, inviteFormBody, lawyerProfileForm, purchaseFormBody, renderHelp, renderLawyerProfile, renderMyQuotes, renderMyServices, renderServiceCatalog, reopenFormBody, reviewFormBody, serviceFormBody, setServiceFilter } from "./market-view.js";
+import { avatar, button, esc, field, formData, icon, money, status } from "./ui.js";
 
 const app = document.querySelector("#app");
 let state = freshState();
 let route = parseRoute();
-let viewRole = "client";
+let viewRole = readViewRole();
 let loadVersion = 0;
 let toastTimer;
 let paymentTimer;
@@ -38,8 +41,13 @@ const modelConsultation = createModelConsultation({
 });
 const chat = createChat({ getUser: getCurrentUser, notify, navigate, onBadge: (count) => { badges.chat = count; paintBadges(); } });
 
+// 视图偏好：律师默认进入律师工作台；手动切换后在本标签页内记住
+function readViewRole() { try { return sessionStorage.getItem("legal-view-role") || ""; } catch { return ""; } }
+function saveViewRole(role) { viewRole = role; try { sessionStorage.setItem("legal-view-role", role); } catch { /* 存储不可用时仅本次有效 */ } }
+function preferredRole(roles) { return roles.includes(viewRole) ? viewRole : ["lawyer", "client", "operator"].find((role) => roles.includes(role)) || roles[0] || "client"; }
+
 function freshState() {
-  return { capabilities: {}, consultations: [], requests: [], lawyers: [], orders: [], documents: [], notifications: [], applications: [], cases: [], audit: [], detail: null, loading: false, error: "" };
+  return { capabilities: {}, consultations: [], requests: [], lawyers: [], services: [], quotes: [], orders: [], documents: [], notifications: [], applications: [], cases: [], audit: [], metrics: null, settlements: {}, detail: null, loading: false, error: "" };
 }
 
 function parseRoute() {
@@ -59,8 +67,6 @@ function heading(title, description = "", actions = "") {
 
 function badge(value) { return status(labels[value] || value || "—"); }
 function ownsRole(role) { return getCurrentUser()?.roles?.includes(role); }
-function detailList(values) { return `<dl class="data-list">${values.map(([title, value]) => `<div><dt>${esc(title)}</dt><dd>${esc(value ?? "—")}</dd></div>`).join("")}</dl>`; }
-function rows(items, columns) { return items.length ? `<div class="table-wrap"><table><thead><tr>${columns.map(([title]) => `<th>${esc(title)}</th>`).join("")}</tr></thead><tbody>${items.map((item) => `<tr>${columns.map(([, value]) => `<td>${value(item)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : empty(); }
 function formButton(text) { return `<p class="form-error" role="alert"></p><button class="btn primary" type="submit">${esc(text)}</button>`; }
 function sourceKey(form) { return `${route.page}:${route.id}:${form.dataset.form}`; }
 function paintBadges() {
@@ -75,8 +81,8 @@ function menuGroups() {
   const lawyerView = viewRole === "lawyer";
   const groups = [
     ["工作区", [["home", "工作台", "home"], ...(ownsRole("client") ? [["model-chat", "法律模型咨询", "spark"]] : []), ...(ownsRole("operator") && !ownsRole("client") && !ownsRole("lawyer") ? [] : [["messages", "实时交流", "message", "chat"]])]],
-    ["服务", [["requests", lawyerView ? "需求线索" : "服务需求", "request"], ["lawyers", "找律师", "lawyer"], ["orders", "服务订单", "order"], ["docs", "文书中心", "doc"]]],
-    ["我的", [["notifications", "服务通知", "bell", "notifications"], ["account", "账号设置", "account"], ...(ownsRole("operator") ? [] : [["lawyer-onboarding", "律师入驻", "review"]])]],
+    ["服务", [["requests", lawyerView ? "需求线索" : "服务需求", "request"], ...(lawyerView ? [["my-services", "我的服务套餐", "briefcase"]] : [["services", "服务套餐", "briefcase"], ["lawyers", "找律师", "lawyer"]]), ["orders", "服务订单", "order"], ["docs", "文书中心", "doc"]]],
+    ["我的", [["notifications", "服务通知", "bell", "notifications"], ["account", "账号设置", "account"], ...(ownsRole("operator") ? [] : [["lawyer-onboarding", ownsRole("lawyer") ? "律师资料" : "律师入驻", "review"]]), ["help", "帮助与保障", "shield"]]],
   ];
   if (ownsRole("operator")) groups.push(["运营管理", [["reviewLawyers", "律师审核", "review"], ["cases", "售后处理", "order"], ["paymentOps", "支付运维", "finance"], ["audit", "审计日志", "audit"]]]);
   return groups;
@@ -86,7 +92,7 @@ function render() {
   route = parseRoute();
   if (!getCurrentUser()) return renderAuthentication();
   const user = getCurrentUser();
-  if (!user.roles.includes(viewRole)) viewRole = user.roles.includes("client") ? "client" : user.roles[0] || "client";
+  if (!user.roles.includes(viewRole)) viewRole = preferredRole(user.roles);
   const groups = menuGroups();
   const activePage = { order: "orders", doc: "docs", model: "model-chat", chat: "model-chat", lawyer: "requests", workspace: "docs" }[route.page] || route.page;
   const title = groups.flatMap(([, items]) => items).find(([name]) => name === activePage)?.[1] || "法律服务平台";
@@ -136,53 +142,51 @@ async function loadRegistrationChallenge() {
 
 function page() {
   const user = getCurrentUser();
+  const lawyerView = viewRole === "lawyer";
   if (route.page === "model-chat" || route.page === "chat") return modelConsultation.render(route);
   if (route.page === "messages") return chat.render(route);
-  if (route.page === "requests" || route.page === "lawyer") return route.id ? requestPage() : `${heading(viewRole === "lawyer" ? "需求线索" : "服务需求", viewRole === "lawyer" ? "认证律师可查看当事人公开的需求并提交报价。" : "发布需求后，认证律师会在线报价；也可以从模型咨询一键生成需求草稿。", ownsRole("client") ? button("new-request", `${icon("plus")} 发布新需求`, "", true) : "")}<section class="surface">${requestRows()}</section>`;
-  if (route.page === "lawyers") return `${heading("认证律师", "仅展示资质有效且已核准的律师；完整证件和邮箱不公开。可直接发起实时交流了解服务细节。")}<section class="surface">${rows(state.lawyers, [["律师", (item) => `<span class="party">${avatar(item, "sm")}<b>${esc(item.name)}</b></span>`], ["律所", (item) => esc(item.firm)], ["地区 / 领域", (item) => `${esc(item.region)} · ${esc(item.field)}`], ["服务方式", (item) => esc(item.mode)], ["资质", (item) => badge(item.status)], ["操作", (item) => ownsRole("client") && item.id !== user.id ? button("open-chat", `${icon("message")} 联系律师`, `data-peer="${esc(item.id)}"`) : "—"]])}</section>`;
-  if (["orders", "lawyerOrders", "adminOrders"].includes(route.page)) return `${heading("服务订单", "跟踪每笔订单的支付、履约、交付与售后进度。金额与支付状态以服务端记录为准。")}${renderOrderList({ orders: state.orders, user, badge })}`;
+  if (route.page === "requests" || route.page === "lawyer") {
+    if (route.id) return `${renderRequestDetail({ item: state.detail, user, lawyerCanQuote: lawyerView && user.lawyer_profile?.can_quote, capabilities: state.capabilities })}${state.detail ? renderRequestAttachments(state.detail) : ""}`;
+    if (lawyerView) {
+      const tab = route.query.get("tab") === "quotes" ? "quotes" : "leads";
+      const tabs = `<div class="pill-tabs page-tabs" role="tablist"><a role="tab" href="#/requests" class="${tab === "leads" ? "active" : ""}" aria-selected="${tab === "leads"}">可报价线索</a><a role="tab" href="#/requests?tab=quotes" class="${tab === "quotes" ? "active" : ""}" aria-selected="${tab === "quotes"}">我的报价</a></div>`;
+      const notice = user.lawyer_profile?.can_quote ? "" : `<div class="info-callout warn">${icon("info")}<span>${user.lawyer_profile?.status === "approved" ? "你已暂停接单，开启“接受新委托”后才能报价。" : "资质审核通过且有效后才能报价。"} <a class="link" href="#/lawyer-onboarding">前往律师资料</a></span></div>`;
+      return `${heading("需求线索", "浏览当事人公开的需求（联系方式已脱敏），提交服务方案与报价。")}${notice}${tabs}${tab === "quotes" ? renderMyQuotes({ quotes: state.quotes }) : renderRequestList({ requests: state.requests, user, lawyerView })}`;
+    }
+    return `${heading("服务需求", "情况复杂或不确定需要什么服务时，发布需求让多位认证律师给出方案和报价，比较后再选择。", ownsRole("client") ? button("new-request", `${icon("plus")} 发布新需求`, "", true) : "")}${renderRequestList({ requests: state.requests, user, lawyerView })}`;
+  }
+  if (route.page === "lawyers") {
+    if (route.id) return renderLawyerProfile({ lawyer: state.detail, user, myRequests: state.requests });
+    return `${heading("找律师", "仅展示资质有效、审核通过的律师。查看主页了解律师背景、服务套餐与评价，可在线咨询或邀请为你的需求报价。")}${renderLawyerDirectory({ lawyers: state.lawyers, user, canContact: ownsRole("client") })}`;
+  }
+  if (route.page === "services") return `${heading("服务套餐", "律师明码标价的标准化法律服务，需求明确时可直接委托，无需等待报价。")}${renderServiceCatalog({ services: state.services, user })}`;
+  if (route.page === "my-services") return `${heading("我的服务套餐", "上架标准化服务，当事人可直接下单委托。", user.lawyer_profile?.status === "approved" ? button("new-service", `${icon("plus")} 上架服务`, "", true) : "")}${renderMyServices({ services: state.services, profile: user.lawyer_profile, capabilities: state.capabilities })}`;
+  if (["orders", "lawyerOrders", "adminOrders"].includes(route.page)) return `${heading("服务订单", "跟踪每笔订单的合同确认、支付、履约、验收与售后进度。金额与支付状态以服务端记录为准。")}${renderOrderList({ orders: state.orders, user, badge })}`;
   if (route.page === "order") return renderOrderDetail({ item: state.detail, user, capabilities: state.capabilities, documents: state.documents, badge, labels });
   if (["docs", "workspace"].includes(route.page)) return `${heading("文书中心", "集中管理订单文书：版本留痕、批注讨论、顺序会签与受控下载。", !ownsRole("operator") ? button("new-document", `${icon("plus")} 新建文书`, "", true) : "")}${renderDocumentList({ documents: state.documents, user, badge })}`;
   if (route.page === "doc") return renderDocumentDetail({ item: state.detail, user, badge, operator: ownsRole("operator") });
   if (route.page === "account") return `${heading("账号设置", "管理头像、个人资料与登录安全。")}${renderAccount({ user, roleNames })}`;
-  if (route.page === "lawyer-onboarding") return `${heading("律师入驻", "提交执业资质，审核通过后开通律师视图与接单能力。")}${renderLawyerOnboarding({ applications: state.applications, badge, operator: ownsRole("operator") })}`;
-  if (route.page === "reviewLawyers") return reviewPage();
-  if (route.page === "cases") return casesPage();
-  if (route.page === "paymentOps") return paymentOpsPage();
-  if (route.page === "audit") return `${heading("审计日志", "业务变更与审计共同提交；不包含模型凭证。")}<section class="surface">${rows(state.audit, [["时间", (item) => date(item.created_at)], ["操作", (item) => esc(item.action)], ["对象", (item) => esc(`${item.object_type}:${item.object_id}`)], ["请求标识", (item) => esc(item.request_id)]])}</section>`;
-  if (route.page === "notifications") return `${heading("服务通知", "订单、报价、文书与审核相关的系统通知。")}<section class="surface">${rows(state.notifications, [["标题", (item) => `<b>${esc(item.title)}</b>`], ["内容", (item) => esc(item.body)], ["时间", (item) => date(item.created_at)], ["状态", (item) => item.read_at ? '<span class="muted">已读</span>' : button("read-notification", "标记已读", `data-id="${esc(item.id)}"`)]])}</section>`;
+  if (route.page === "lawyer-onboarding") {
+    const profile = user.lawyer_profile;
+    return `${heading(ownsRole("lawyer") ? "律师资料" : "律师入驻", ownsRole("lawyer") ? "维护律师主页展示资料与接单状态，查看资质申请记录。" : "提交执业资质，审核通过后开通律师视图与接单能力。")}${profile && ["approved", "frozen"].includes(profile.status) ? lawyerProfileForm({ ...profile, user_id: user.id }) : ""}${renderLawyerOnboarding({ applications: state.applications, badge, operator: ownsRole("operator"), profile })}`;
+  }
+  if (route.page === "help") return `${heading("帮助与保障", "了解平台的服务流程、收费规则、售后与隐私保护。")}${renderHelp(state.capabilities)}`;
+  if (route.page === "reviewLawyers") return `${heading("律师入驻审核", "核验执业资质与材料；通过后开通律师身份与接单能力，可随时冻结或恢复接单权限。")}${renderReviewPage({ applications: state.applications })}`;
+  if (route.page === "cases") return `${heading("售后与争议", "处理退款申请与履约争议，结果同时通知当事人与律师。")}${renderCasesPage({ cases: state.cases })}`;
+  if (route.page === "paymentOps") return `${heading("支付与结算运维", "监测支付通知、退款与订单结算；签约前收款保持关闭。")}${renderPaymentOps({ capabilities: state.capabilities, detail: state.detail || {}, settlements: state.settlements })}`;
+  if (route.page === "audit") return `${heading("审计日志", "业务变更与审计共同提交；不包含模型凭证。")}${renderAuditPage({ audit: state.audit })}`;
+  if (route.page === "notifications") return `${heading("服务通知", "订单、报价、文书与审核相关的系统通知。")}${renderNotifications({ notifications: state.notifications })}`;
   return renderWorkbench({ state, user, viewRole, roleName: roleNames[viewRole] || viewRole, unreadChats: badges.chat });
 }
 
-function requestRows() {
-  return rows(state.requests, [["需求", (item) => `<a href="#/requests/${esc(item.id)}">${esc(item.title)}</a>`], ["地区 / 类型", (item) => `${esc(item.region)} · ${esc(item.service_type)}`], ["预算", (item) => money(item.budget)], ["截止", (item) => esc(item.deadline)], ["状态", (item) => badge(item.status)]]);
-}
-
-function requestPage() {
-  const item = state.detail;
-  if (!item) return empty("未找到需求");
-  const me = getCurrentUser().id;
-  const quoted = (item.quotes || []).some((quote) => quote.lawyer_id === me);
-  return `<a class="back-link" href="#/requests">${icon("back")} 返回需求列表</a>${heading(item.title, `${item.region} · ${item.service_type}`, ownsRole("lawyer") && item.owner_id !== me && quoted ? button("open-chat", `${icon("message")} 联系当事人`, `data-peer="${esc(item.owner_id)}"`) : "")}<section class="surface"><div class="badges">${badge(item.status)}</div>${detailList([["事实与目标", item.facts], ["期望交付", item.deliverables], ["预算", money(item.budget)], ["公开范围", item.visibility]])}</section>${renderRequestAttachments(item)}<section class="surface"><h2>律师报价</h2>${rows(item.quotes || [], [["服务范围", (quote) => esc(quote.scope)], ["交付", (quote) => esc(quote.deliverables)], ["报价", (quote) => money(quote.price)], ["有效期", (quote) => esc(quote.valid_until)], ["操作", (quote) => item.owner_id === me ? `${quote.status === "valid" && item.status === "quoting" ? button("accept-quote", "接受报价并创建订单", `data-id="${esc(quote.id)}"`, true) : badge(quote.status)} ${button("open-chat", `${icon("message")} 交流`, `data-peer="${esc(quote.lawyer_id)}"`)}` : badge(quote.status)]])}</section>${ownsRole("lawyer") && item.owner_id !== me && item.status === "quoting" ? `<section class="surface"><h2>提交报价</h2><form data-form="quote">${field("服务范围", "scope", "", { textarea: true, required: true })}${field("交付物", "deliverables", "", { required: true })}<div class="form-grid">${field("费用（元）", "price", "", { type: "number", min: "0.01", required: true })}${field("服务天数", "days", "3", { type: "number", min: 1, required: true })}${field("报价有效期", "valid_until", "", { type: "date", required: true })}</div>${formButton("提交报价")}</form></section>` : ""}`;
-}
-
-function reviewPage() {
-  return `${heading("律师入驻审核", "管理员选择同意后即可完成律师入驻并启用接单；申请资料和有效期仍由系统校验。")}${state.applications.map((entry) => `<section class="surface remote-record"><h2>${esc(entry.firm)} · 申请 v${entry.version} ${badge(entry.status)}</h2>${detailList([["用户ID", entry.user_id], ["地区 / 领域", `${entry.region} / ${entry.field}`], ["执业证号", entry.license_number], ["有效期", entry.expires_on]])}${entry.credential_file_ids.map((fileId) => button("review-file", "下载审核材料（留审计）", `data-application="${esc(entry.id)}" data-id="${esc(fileId)}"`)).join(" ")}${["submitted", "under_review"].includes(entry.status) ? `<form data-form="review-lawyer" data-id="${esc(entry.id)}"><input name="expected_version" type="hidden" value="${entry.version}">${field("决定", "decision", "supplement", { options: ["approve", "reject", "supplement"] })}${field("审核意见", "reason", "", { textarea: true, required: true })}${formButton("提交审核决定")}</form>` : ""}${entry.status === "approved" ? button("freeze-lawyer", "冻结新接单权限", `data-id="${esc(entry.user_id)}"`) : ""}${entry.reviews.map((review) => `<p>${esc(review.decision)}：${esc(review.reason)} · ${date(review.created_at)}</p>`).join("")}</section>`).join("") || empty("暂无申请")}`;
-}
-
-function casesPage() {
-  return `${heading("售后与争议", "同意退款后需等待支付机构确认，不能只修改本地已退款状态。")}${state.cases.map((entry) => `<section class="surface"><h2>${esc(entry.case_type)} ${badge(entry.status)}</h2><p><a class="link" href="#/order/${esc(entry.order_id)}">查看订单</a> · ${money(entry.amount)}</p><p>${esc(entry.reason)}</p>${entry.status === "pending" ? `<form data-form="resolve-case" data-id="${esc(entry.id)}">${field("决定", "decision", "reject", { options: ["approve", "reject"] })}${field("处理意见", "resolution", "", { textarea: true, required: true })}${formButton("确认处理")}</form>` : `<p>${esc(entry.resolution)}</p>`}</section>`).join("") || empty()}`;
-}
-
-function paymentOpsPage() {
-  const details = state.detail || {};
-  return `${heading("支付运维", "异常通知、重复资金流水和退款任务需持续监测；签约前收款保持关闭。") }<section class="surface">${detailList([["渠道", state.capabilities.payment_provider], ["收款开关", state.capabilities.payments_enabled ? "已配置（仍需商户验收）" : "关闭"], ["待处理通知", details.pending_inbox], ["人工处理通知", details.manual_review], ["待确认退款", details.pending_refunds], ["重复扣款待核对", details.overpayments]])}</section>`;
+function requestModal(summary = null) {
+  modal("发布服务需求", requestFormBody({ draft: summary?.summary?.request_draft ? { ...summary.summary.request_draft, facts: summary.summary.request_draft.facts || summary.summary.questions?.join("\n\n") || "" } : {}, summary }));
 }
 
 function pagination() {
   if (route.id) return "";
   const resources = { requests: "requests", lawyer: "requests", orders: "orders", lawyerOrders: "orders", adminOrders: "orders", docs: "documents", workspace: "documents", notifications: "notifications", reviewLawyers: "applications", audit: "audit" };
-  const resource = resources[route.page];
+  const resource = route.query.get("tab") === "quotes" ? "" : resources[route.page];
   if (!resource) return "";
   const offset = Math.max(0, Number(route.query.get("offset")) || 0);
   if (!offset && state[resource].length < 50) return "";
@@ -220,21 +224,31 @@ async function load() {
       const detail = await apiRequest(`/consultations/${currentRoute.id}`);
       next.consultations = [detail, ...next.consultations.filter((item) => item.id !== detail.id)];
     }
-    if (["home", "requests", "lawyer"].includes(pageName)) next.requests = await apiRequest(`/requests?${paging}`);
+    const roleView = preferredRole(user.roles);
+    const quoteTab = currentRoute.query.get("tab") === "quotes" && roleView === "lawyer";
+    if (["home", "requests", "lawyer"].includes(pageName) && !currentRoute.id && !quoteTab) next.requests = await apiRequest(`/requests?${paging}`);
+    if (quoteTab) next.quotes = await apiRequest("/quotes/mine");
+    if (pageName === "home" && roleView === "operator") next.metrics = await apiRequest("/admin/metrics");
     if (["home", "orders", "lawyerOrders", "adminOrders", "docs", "workspace"].includes(pageName)) next.orders = await apiRequest(`/orders?${paging}`);
     if (["home", "docs", "workspace"].includes(pageName)) next.documents = await apiRequest(`/documents?${paging}`);
-    if (pageName === "lawyers") next.lawyers = await apiRequest("/lawyers");
+    if (pageName === "lawyers" && !currentRoute.id) next.lawyers = await apiRequest("/lawyers");
+    if (pageName === "lawyers" && currentRoute.id) {
+      next.detail = await apiRequest(`/lawyers/${encodeURIComponent(currentRoute.id)}`);
+      next.requests = user.roles.includes("client") ? (await apiRequest("/requests?status=quoting&limit=100")).filter((item) => item.owner_id === user.id) : [];
+    }
+    if (pageName === "services") next.services = await apiRequest("/services");
+    if (pageName === "my-services") next.services = user.lawyer_profile ? await apiRequest("/lawyers/me/services") : [];
     if (["requests", "lawyer"].includes(pageName) && currentRoute.id) next.detail = { ...await apiRequest(`/requests/${currentRoute.id}`), quotes: await apiRequest(`/requests/${currentRoute.id}/quotes`) };
     if (pageName === "order") {
-      next.detail = { ...await apiRequest(`/orders/${currentRoute.id}`), payments: await apiRequest(`/orders/${currentRoute.id}/payments`), deliveries: await apiRequest(`/orders/${currentRoute.id}/deliveries`), cases: await apiRequest(`/orders/${currentRoute.id}/after-sales`) };
+      next.detail = { ...await apiRequest(`/orders/${currentRoute.id}`), payments: await apiRequest(`/orders/${currentRoute.id}/payments`), deliveries: await apiRequest(`/orders/${currentRoute.id}/deliveries`), cases: await apiRequest(`/orders/${currentRoute.id}/after-sales`), reviews: await apiRequest(`/orders/${currentRoute.id}/reviews`) };
       next.documents = await apiRequest(`/documents?order_id=${encodeURIComponent(currentRoute.id)}&limit=100`);
     }
     if (pageName === "doc") next.detail = await apiRequest(`/documents/${currentRoute.id}`);
     if (pageName === "lawyer-onboarding") next.applications = await apiRequest("/lawyers/me/application");
-    if (pageName === "reviewLawyers") next.applications = await apiRequest(`/admin/lawyer-applications?${paging}`);
+    if (pageName === "reviewLawyers") next.applications = await apiRequest(`/admin/lawyer-applications?limit=100&offset=${offset}`);
     if (pageName === "cases") next.cases = await apiRequest("/admin/cases");
     if (pageName === "audit") next.audit = await apiRequest(`/admin/audit?${paging}`);
-    if (pageName === "paymentOps") next.detail = await apiRequest("/admin/payment-status");
+    if (pageName === "paymentOps") { next.detail = await apiRequest("/admin/payment-status"); next.settlements = await apiRequest("/admin/settlements"); }
     if (pageName === "notifications") next.notifications = await apiRequest(`/notifications?${paging}`);
     if (version !== loadVersion || !getCurrentUser() || getCurrentUser().id !== user.id) return;
     Object.assign(state, next, { loading: false });
@@ -298,15 +312,6 @@ function consentRequest(consultationId) {
   modal("授权生成需求草稿", `${intro}<form data-form="consent-summary" data-id="${esc(consultationId)}"><label class="check-row"><input type="checkbox" name="consent" required> 我同意使用本次咨询对话生成服务需求草稿</label><p class="form-error" role="alert"></p><div class="modal-actions"><button class="btn" type="button" data-action="close-modal">暂不生成</button><button class="btn primary" type="submit">同意并生成草稿</button></div></form>`);
 }
 
-function requestModal(summary = null) {
-  const generated = summary?.summary?.request_draft || {};
-  const facts = generated.facts || summary?.summary?.questions?.join("\n\n") || "";
-  const missingLabels = { title: "需求标题", domain: "业务分类", field: "专业领域", service_type: "服务类型", region: "地区", budget: "预算", deadline: "期望截止日期", facts: "事实与目标", deliverables: "交付物要求" };
-  const missing = (generated.missing_fields || []).map((name) => missingLabels[name] || name).filter(Boolean);
-  const notice = summary ? `<div class="remote-warning"><b>${generated.generated_by === "model" ? "法律模型已根据咨询对话生成需求草稿" : "已根据咨询记录生成需求草稿"}</b><p>请逐项核对并按实际需求修改，系统不会未经确认自动发布。</p>${missing.length ? `<p>仍需补充：${esc(missing.join("、"))}</p>` : ""}</div>` : "";
-  modal("发布服务需求", `${notice}<form data-form="request">${summary ? `<input type="hidden" name="source_consultation_id" value="${esc(summary.consultation_id)}"><input type="hidden" name="consent_id" value="${esc(summary.consent_id)}">` : ""}${field("需求标题", "title", generated.title || "", { required: true })}<div class="form-grid">${field("业务分类", "domain", generated.domain || "", { required: true })}${field("专业领域", "field", generated.field || "", { required: true })}${field("服务类型", "service_type", generated.service_type || "", { required: true })}${field("地区", "region", generated.region || "", { required: true })}${field("预算（元）", "budget", generated.budget || "", { type: "number", min: "0.01", required: true })}${field("期望截止日期", "deadline", generated.deadline || "", { type: "date", required: true })}</div>${field("事实与目标（至少8字）", "facts", facts, { textarea: true, required: true })}${field("交付物要求", "deliverables", generated.deliverables || "", { textarea: true, required: true })}${requestAttachmentField()}${field("公开范围", "visibility", "认证律师可见", { options: ["认证律师可见"] })}<label class="check-row"><input name="consent" type="checkbox" required> 我已核对内容并同意向认证律师发布需求</label>${formButton("确认发布")}</form>`);
-}
-
 function modal(title, body) {
   closeModal();
   const element = document.createElement("div");
@@ -320,6 +325,8 @@ function modal(title, body) {
 }
 
 function closeModal() { document.querySelector("#remote-modal")?.remove(); }
+// 业务校验错误直接展示原因；只有服务端异常才附带请求编号，便于用户向客服反馈
+function errorText(error) { return `${error.message}${error.requestId && (!error.status || error.status >= 500) ? `（请求编号：${error.requestId}）` : ""}`; }
 function notify(message) {
   let target = document.querySelector("#toast");
   if (!target) return;
@@ -354,6 +361,7 @@ function restoreDrafts(root) {
 
 function resetSession() {
   draftOwner = "";
+  saveViewRole("");
   clearSession();
   chat.stop();
   state = freshState();
@@ -370,6 +378,10 @@ document.addEventListener("input", (event) => {
   if (search) {
     if (search.dataset.search === "orders") { setOrderQuery(search.value); document.querySelector("#order-cards").innerHTML = renderOrderCards({ orders: state.orders, user: getCurrentUser(), badge }); }
     if (search.dataset.search === "documents") { setDocumentQuery(search.value); document.querySelector("#document-cards").innerHTML = renderDocumentCards({ documents: state.documents, user: getCurrentUser(), badge }); }
+    if (search.dataset.search === "requests") { setRequestFilter("query", search.value); document.querySelector("#request-cards").innerHTML = renderRequestCards({ requests: state.requests, user: getCurrentUser(), lawyerView: viewRole === "lawyer" }); }
+    if (search.dataset.search === "lawyers") { setRequestFilter("lawyerQuery", search.value); document.querySelector("#lawyer-cards").innerHTML = renderLawyerCards({ lawyers: state.lawyers, user: getCurrentUser(), canContact: ownsRole("client") }); }
+    if (search.dataset.search === "services") { setServiceFilter("serviceQuery", search.value); repaintServices(); }
+    if (search.dataset.search === "audit") { setAdminFilter("auditAction", search.value); const cursor = search.selectionStart; render(); const input = document.querySelector('[data-search="audit"]'); input?.focus(); input?.setSelectionRange(cursor, cursor); }
     return;
   }
   const form = event.target.closest("form[data-form]");
@@ -380,8 +392,27 @@ document.addEventListener("input", (event) => {
   }
 });
 
+function repaintServices() {
+  const html = renderServiceCatalog({ services: state.services, user: getCurrentUser() });
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  document.querySelector("#service-cards")?.replaceWith(holder.querySelector("#service-cards"));
+}
+
 document.addEventListener("change", async (event) => {
   const target = event.target;
+  if (target.matches("[data-request-filter]")) {
+    setRequestFilter(target.dataset.requestFilter, target.value);
+    if (target.dataset.requestFilter.startsWith("lawyer")) document.querySelector("#lawyer-cards").innerHTML = renderLawyerCards({ lawyers: state.lawyers, user: getCurrentUser(), canContact: ownsRole("client") });
+    else document.querySelector("#request-cards").innerHTML = renderRequestCards({ requests: state.requests, user: getCurrentUser(), lawyerView: viewRole === "lawyer" });
+    return;
+  }
+  if (target.matches("[data-service-filter]")) { setServiceFilter(target.dataset.serviceFilter, target.value); return repaintServices(); }
+  if (target.matches("[data-admin-filter]")) { setAdminFilter(target.dataset.adminFilter, target.value); return render(); }
+  if (target.matches('[name="specialties"]')) {
+    const checked = target.form.querySelectorAll('[name="specialties"]:checked');
+    if (checked.length > 5) { target.checked = false; notify("其他擅长领域最多选择 5 个"); }
+  }
   if (target.matches("[data-template-select]")) {
     const body = target.form.elements.body;
     const template = documentTemplates[target.value]?.[1] ?? "";
@@ -403,6 +434,8 @@ document.addEventListener("change", async (event) => {
 document.addEventListener("click", async (event) => {
   const panel = document.querySelector("#user-menu-panel");
   if (panel && !panel.hidden && !event.target.closest(".user-menu")) panel.hidden = true;
+  const readLink = event.target.closest("a[data-read]");
+  if (readLink?.dataset.read) void mutate(`/notifications/${readLink.dataset.read}/read`).then(refreshNotificationBadge).catch(() => {});
   const element = event.target.closest("[data-action]");
   if (!element || element.disabled) return;
   const action = element.dataset.action;
@@ -414,7 +447,7 @@ document.addEventListener("click", async (event) => {
     if (action === "close-modal") return closeModal();
     if (action === "nav-toggle") return document.querySelector(".app-shell")?.classList.toggle("nav-open");
     if (action === "user-menu") { const open = panel.hidden; panel.hidden = !open; element.setAttribute("aria-expanded", String(open)); return; }
-    if (action === "switch-role") { viewRole = element.dataset.role; setGuideTab(""); return render(); }
+    if (action === "switch-role") { saveViewRole(element.dataset.role); setGuideTab(""); return route.page === "home" ? load() : navigate("home"); }
     if (action === "guide-tab") { setGuideTab(element.dataset.role); return render(); }
     if (action === "guide-toggle") { toggleGuide(); return render(); }
     if (action === "order-filter") { setOrderFilter(element.dataset.value); return render(); }
@@ -436,7 +469,8 @@ document.addEventListener("click", async (event) => {
     if (action === "refresh") return await load();
     if (action === "page") return navigate(route.page, route.id, { offset: element.dataset.offset });
     if (action === "new-request") return requestModal();
-    if (action === "accept-quote") { const order = await mutate(`/quotes/${element.dataset.id}/accept`); navigate("order", order.id); return; }
+    if (action === "accept-quote") return modal("确认选择该律师", acceptQuoteBody((state.detail?.quotes || []).find((quote) => quote.id === element.dataset.id) || {}, state.capabilities));
+    if (action === "confirm-accept-quote") { const order = await mutate(`/quotes/${element.dataset.id}/accept`); closeModal(); notify("已生成订单，请确认服务合同"); navigate("order", order.id); return; }
     if (action === "pay") { await mutate(`/orders/${route.id}/payments`, {}); notify(state.capabilities.payment_simulation_enabled ? "模拟支付单已创建，请点击模拟支付完成订单" : "支付单已创建，请等待渠道响应后完成支付"); return await load(); }
     if (action === "simulate-payment") { await mutate(`/orders/${route.id}/payments/${element.dataset.id}/simulate-success`, {}); notify("模拟支付成功，订单已进入服务流程"); return await load(); }
     if (action === "new-document") {
@@ -451,12 +485,59 @@ document.addEventListener("click", async (event) => {
     if (action === "download-file") return await downloadFile(element.dataset.id, element.dataset.name);
     if (action === "download-request-file") return await downloadFile(element.dataset.id, element.dataset.name, `/requests/${encodeURIComponent(element.dataset.requestId)}/files/${encodeURIComponent(element.dataset.id)}`);
     if (action === "review-file") return await downloadFile(element.dataset.id, `审核材料-${element.dataset.id}`, `/admin/lawyer-applications/${element.dataset.application}/files/${element.dataset.id}`);
-    if (action === "delivery-modal") return modal("提交交付物", state.documents.length ? `<form data-form="delivery"><p class="muted">选择本订单中已完成的文书作为交付物，当事人确认收悉后订单完成。</p><label class="field"><span>交付文书</span><select name="document_id" required>${state.documents.map((item) => `<option value="${esc(item.id)}">${esc(item.title)} · v${item.current_version} · ${esc(labels[item.status] || item.status)}</option>`).join("")}</select></label>${formButton("提交交付")}</form>` : `<div class="info-callout warn">本订单还没有文书，请先新建交付文书。</div><div class="modal-actions">${button("new-document", "新建文书", `data-order="${esc(route.id)}"`, true)}</div>`);
+    if (action === "delivery-modal") {
+      const deliverable = state.documents.filter((item) => item.doc_type !== "service_contract" && !["signing", "archived"].includes(item.status));
+      return modal("提交交付物", deliverable.length ? `<form data-form="delivery"><p class="muted">选择本订单中已完成的文书作为交付物，当事人验收后订单完成；当事人 ${state.capabilities.delivery_auto_accept_days || 7} 天内未处理将自动确认验收。</p><label class="field"><span>交付文书</span><select name="document_id" required>${deliverable.map((item) => `<option value="${esc(item.id)}">${esc(item.title)} · v${item.current_version} · ${esc(labels[item.status] || item.status)}</option>`).join("")}</select></label>${field("交付说明（选填）", "note", "", { textarea: true, rows: 2, placeholder: "说明交付内容、使用建议或后续注意事项" })}${formButton("提交交付")}</form>` : `<div class="info-callout warn">${icon("info")}<span>本订单还没有可交付的文书（服务合同和会签中的文书不能作为交付物），请先新建交付文书。</span></div><div class="modal-actions">${button("new-document", "新建文书", `data-order="${esc(route.id)}"`, true)}</div>`);
+    }
     if (action === "accept-delivery") { await mutate(`/orders/${route.id}/receipt?accepted=true`); notify("已确认收悉，订单完成"); return await load(); }
-    if (action === "after-sales-modal") return modal("申请售后", `<form data-form="after-sales"><div class="info-callout">${icon("info")}<span>提交后订单进入售后处理，结算暂停，由平台运营审核处理。</span></div>${field("类型", "case_type", "refund", { options: ["refund", "dispute"] })}${field("申请金额（元）", "amount", state.detail.paid, { type: "number", min: 0, required: true })}${field("原因", "reason", "", { textarea: true, required: true })}${formButton("提交申请")}</form>`);
+    if (action === "after-sales-modal") {
+      const client = state.detail.client_id === getCurrentUser().id;
+      return modal("申请售后", `<form data-form="after-sales"><div class="info-callout">${icon("info")}<span>提交后订单进入售后处理，结算暂停，由平台运营核实后处理，结果会通知双方。</span></div>${client ? field("类型", "case_type", "refund", { options: [["refund", "申请退款"], ["dispute", "履约争议（请平台介入协调）"]] }) : '<input type="hidden" name="case_type" value="dispute">'}${client ? field("申请退款金额（元）", "amount", state.detail.paid, { type: "number", min: 0, max: state.detail.paid, step: "0.01", required: true, hint: `订单已付 ${money(state.detail.paid)}；选择“履约争议”时可填 0` }) : '<input type="hidden" name="amount" value="0">'}${field("原因", "reason", "", { textarea: true, required: true, placeholder: "请具体说明问题与期望的处理方式，可附上沟通记录要点" })}${formButton("提交申请")}</form>`);
+    }
     if (action === "read-notification") { await mutate(`/notifications/${element.dataset.id}/read`); return await load(); }
     if (action === "withdraw-application") { await mutate(`/lawyers/me/application/${element.dataset.id}/withdraw`); return await load(); }
-  } catch (error) { notify(`${error.message}${error.requestId ? `（请求：${error.requestId}）` : ""}`); }
+    // ---- 订单 ----
+    if (action === "confirm-contract") { const order = await mutate(`/orders/${route.id}/confirm`); notify(order.status === "pending_payment" ? "双方已确认，服务合同生效" : "已确认服务合同，等待对方确认"); return await load(); }
+    if (action === "cancel-order") return modal("取消订单", `<form data-form="cancel-order"><p class="muted">付款前双方均可取消订单，取消后${state.detail?.request_id ? "需求将重新开放报价（定向委托的需求将关闭）" : "订单关闭"}。</p>${field("取消原因", "reason", "", { textarea: true, rows: 2, required: true, placeholder: "将告知对方" })}${formButton("确认取消订单")}</form>`);
+    if (action === "view-contract") {
+      if (!state.detail?.contract_id) return notify("未找到服务合同");
+      const contract = await apiRequest(`/documents/${state.detail.contract_id}`);
+      const body = contract.versions.find((entry) => entry.number === contract.current_version)?.body || "";
+      return modal(contract.title, `<pre class="contract-body">${esc(body)}</pre><div class="modal-actions"><a class="btn" href="#/doc/${esc(contract.id)}">在文书中心打开</a><button class="btn primary" type="button" data-action="close-modal">关闭</button></div>`);
+    }
+    if (action === "review-modal") return modal(state.detail.client_id === getCurrentUser().id ? "评价律师" : "评价当事人", reviewFormBody(state.detail.client_id === getCurrentUser().id));
+    if (action === "export-evidence") { const pack = await apiRequest(`/orders/${route.id}/evidence`); download(`存证包-${pack.order.title}-${pack.package_sha256.slice(0, 8)}.json`, JSON.stringify(pack, null, 2), "application/json;charset=utf-8"); return notify("存证包已导出，文件指纹已记录审计"); }
+    if (action === "copy-id") { try { await navigator.clipboard.writeText(element.dataset.value); notify("订单号已复制"); } catch { notify(`订单号：${element.dataset.value}`); } return; }
+    // ---- 文书 ----
+    if (action === "restore-version") { await mutate(`/documents/${route.id}/versions/${element.dataset.version}/restore`); notify(`已将 v${element.dataset.version} 恢复为新版本`); return await load(); }
+    if (action === "resolve-comment") { await mutate(`/documents/${route.id}/comments/${element.dataset.id}/resolve`); return await load(); }
+    if (action === "withdraw-workflow") { await mutate(`/documents/${route.id}/workflow/withdraw`); notify("会签已撤回，文书可继续修改"); return await load(); }
+    // ---- 需求与报价 ----
+    if (action === "request-filter") { setRequestFilter("status", element.dataset.value); return render(); }
+    if (action === "edit-request") return modal("编辑需求", requestFormBody({ edit: state.detail }));
+    if (action === "close-request") return modal("关闭需求", `<form data-form="close-request"><p class="muted">关闭后律师无法继续报价，已有的有效报价将失效。之后可重新开放报价。</p>${field("关闭原因（选填）", "reason", "", { placeholder: "例如：问题已解决" })}${formButton("确认关闭")}</form>`);
+    if (action === "reopen-request") return modal("重新开放报价", reopenFormBody());
+    if (action === "withdraw-quote") { await mutate(`/quotes/${element.dataset.id}/withdraw`); notify("报价已撤回"); return await load(); }
+    if (action === "invite-lawyer") return modal("邀请律师报价", inviteFormBody(element.dataset.id, state.requests.filter((item) => item.owner_id === getCurrentUser().id)));
+    // ---- 服务套餐 ----
+    if (action === "purchase-service") {
+      const service = state.services.find((item) => item.id === element.dataset.id) || (state.detail?.services || []).map((item) => ({ ...item, lawyer: { name: state.detail.name } })).find((item) => item.id === element.dataset.id);
+      return modal("委托服务", purchaseFormBody(service, state.capabilities));
+    }
+    if (action === "new-service") return modal("上架服务", serviceFormBody(null, state.capabilities));
+    if (action === "edit-service") return modal("编辑服务", serviceFormBody(state.services.find((item) => item.id === element.dataset.id), state.capabilities));
+    if (action === "toggle-service") {
+      const item = state.services.find((entry) => entry.id === element.dataset.id);
+      await apiRequest(`/lawyers/me/services/${item.id}`, { method: "PUT", body: { title: item.title, service_type: item.service_type, field: item.field, description: item.description, deliverables: item.deliverables, price: item.price, days: item.days, active: !item.active } });
+      notify(item.active ? "服务已下架" : "服务已重新上架");
+      return await load();
+    }
+    // ---- 运营 ----
+    if (action === "admin-filter") { setAdminFilter(element.dataset.name, element.dataset.value); return render(); }
+    if (action === "unfreeze-lawyer") return modal("恢复接单权限", `<form data-form="unfreeze-lawyer" data-id="${esc(element.dataset.id)}">${field("恢复原因", "reason", "", { textarea: true, required: true, placeholder: "将通知律师" })}${formButton("确认恢复")}</form>`);
+    if (action === "run-maintenance") { const result = await mutate("/admin/maintenance/run"); notify(`已执行：过期需求 ${result.expired_requests}、自动验收 ${result.auto_accepted}、逾期提醒 ${result.overdue_reminded}、结算 ${result.settled}`); return await load(); }
+    if (action === "read-all-notifications") { await mutate("/notifications/read-all"); notify("已全部标为已读"); return await load(); }
+  } catch (error) { notify(errorText(error)); }
   finally { element.disabled = false; }
 });
 
@@ -494,7 +575,15 @@ document.addEventListener("submit", async (event) => {
       setSession(session);
       state = freshState();
       chat.start();
+      if (kind === "register" && values.registration_intent === "lawyer") { notify("注册成功，请提交执业资质完成律师入驻"); if (route.page !== "lawyer-onboarding") return navigate("lawyer-onboarding"); }
       return await load();
+    }
+    if (kind === "profile") {
+      const user = await apiRequest("/auth/me", { method: "PATCH", body: { name: values.name } });
+      updateCurrentUser({ ...getCurrentUser(), ...user });
+      formDrafts.delete(sourceKey(form));
+      render();
+      return notify("个人资料已更新");
     }
     if (kind === "password") {
       await mutate("/auth/password", values);
@@ -514,7 +603,29 @@ document.addEventListener("submit", async (event) => {
       target = ["requests", item.id];
     }
     if (kind === "quote") { values.days = Number(values.days); await mutate(`/requests/${route.id}/quotes`, values); }
-    if (kind === "document") { const item = await mutate("/documents", { ...values, doc_type: "legal_document", members: [] }); target = ["doc", item.id]; }
+    if (kind === "edit-request") { const { expected_version: version, ...rest } = values; await apiRequest(`/requests/${route.id}`, { method: "PUT", body: { ...rest, expected_version: Number(version) } }); }
+    if (kind === "close-request") await mutate(`/requests/${route.id}/close`, { reason: values.reason || "" });
+    if (kind === "reopen-request") await mutate(`/requests/${route.id}/reopen`, { deadline: values.deadline });
+    if (kind === "invite-lawyer") { await mutate(`/requests/${values.request_id}/invitations`, { lawyer_id: form.dataset.id }); closeModal(); return notify("邀请已发送，律师报价后会通知你"); }
+    if (kind === "cancel-order") await mutate(`/orders/${route.id}/cancel`, { reason: values.reason });
+    if (kind === "review") await mutate(`/orders/${route.id}/reviews`, { rating: Number(values.rating), content: values.content || "" });
+    if (kind === "purchase-service") {
+      const owner = getCurrentUser()?.id;
+      const attachment_file_ids = await uploadRequestAttachments(form, uploadFile);
+      if (!owner || owner !== getCurrentUser()?.id) throw new Error("账户已变更，请重新登录后委托");
+      const order = await mutate(`/services/${form.dataset.id}/purchase`, { facts: values.facts, region: values.region, attachment_file_ids });
+      target = ["order", order.id];
+    }
+    if (kind === "service") {
+      const body = { title: values.title, service_type: values.service_type, field: values.field, description: values.description, deliverables: values.deliverables, price: values.price, days: Number(values.days), active: form.elements.active.checked };
+      if (form.dataset.id) await apiRequest(`/lawyers/me/services/${form.dataset.id}`, { method: "PUT", body });
+      else await mutate("/lawyers/me/services", body);
+    }
+    if (kind === "lawyer-profile") {
+      await apiRequest("/lawyers/me/profile", { method: "PUT", body: { bio: values.bio || "", practice_years: Number(values.practice_years || 0), mode: values.mode, specialties: [...form.querySelectorAll('[name="specialties"]:checked')].map((input) => input.value), available: Boolean(form.elements.available.checked) } });
+    }
+    if (kind === "unfreeze-lawyer") await mutate(`/admin/lawyers/${form.dataset.id}/unfreeze`, { reason: values.reason });
+    if (kind === "document") { const item = await mutate("/documents", { ...values, members: [] }); target = ["doc", item.id]; }
     if (kind === "version") { values.base_version = Number(values.base_version); await mutate(`/documents/${route.id}/versions`, values); }
     if (kind === "workflow") {
       const assignees = [...form.querySelectorAll("[data-member]:checked")].map((input) => input.value);
@@ -524,10 +635,10 @@ document.addEventListener("submit", async (event) => {
     if (kind === "return-document") await mutate(`/documents/${route.id}/workflow/return`, { version: state.detail.locked_version, reason: values.reason });
     if (kind === "comment") await mutate(`/documents/${route.id}/comments`, { version: state.detail.current_version, text: values.text });
     if (kind === "document-file") await uploadFile(form.elements.file.files[0], route.id);
-    if (kind === "delivery") await mutate(`/orders/${route.id}/deliveries`, { document_id: values.document_id });
+    if (kind === "delivery") await mutate(`/orders/${route.id}/deliveries`, { document_id: values.document_id, note: values.note || "" });
     if (kind === "return-delivery") await mutate(`/orders/${route.id}/receipt?accepted=false&reason=${encodeURIComponent(values.reason)}`);
-    if (kind === "after-sales") await mutate(`/orders/${route.id}/after-sales`, values);
-    if (kind === "resolve-case") await mutate(`/admin/cases/${form.dataset.id}/resolve`, values);
+    if (kind === "after-sales") await mutate(`/orders/${route.id}/after-sales`, { case_type: values.case_type, reason: values.reason, amount: values.case_type === "refund" ? values.amount || "0" : "0" });
+    if (kind === "resolve-case") await mutate(`/admin/cases/${form.dataset.id}/resolve`, { decision: values.decision, resolution: values.resolution, amount: values.decision === "approve" && values.amount ? values.amount : null });
     if (kind === "lawyer-application") {
       const uploaded = [];
       for (const file of form.elements.credentials.files) uploaded.push((await uploadFile(file)).id);
@@ -540,14 +651,14 @@ document.addEventListener("submit", async (event) => {
     closeModal();
     if (target) navigate(...target);
     else await load();
-    notify("操作已由服务器确认并保存");
+    notify("操作成功，已保存");
   } catch (error) {
     if (kind === "register" && error.code === "invalid_registration_challenge") {
       if (errorTarget?.isConnected) errorTarget.textContent = `${error.message}，已刷新题目，请重新作答`;
       await loadRegistrationChallenge();
       return;
     }
-    const message = `${error.message}${error.requestId ? `（请求：${error.requestId}）` : ""}`;
+    const message = errorText(error);
     if (errorTarget?.isConnected) errorTarget.textContent = message;
     else notify(message);
   } finally {
@@ -555,6 +666,12 @@ document.addEventListener("submit", async (event) => {
     submit.disabled = false;
   }
 });
+
+// 每 10 分钟用仍有效的令牌续期一次；页面隐藏时跳过，令牌过期后由 auth-expired 处理
+setInterval(async () => {
+  if (!getCurrentUser() || document.hidden) return;
+  try { const { access_token } = await apiRequest("/auth/refresh", { method: "POST" }); if (getCurrentUser()) setSession({ access_token, user: getCurrentUser() }); } catch { /* 续期失败时沿用现有令牌 */ }
+}, 10 * 60 * 1000);
 
 window.addEventListener("hashchange", () => { closeModal(); load(); });
 window.addEventListener("auth-expired", () => { ++loadVersion; chat.stop(); closeModal(); state = freshState(); render(); });

@@ -36,8 +36,19 @@ def list_orders(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=10
 
 @router.get("/orders/{order_id}")
 def get_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    from datetime import timedelta
+
+    from app.models import Document
+
     order = trade.get_order(db, user, order_id)
-    return order_out(order, user_briefs(db, [order.client_id, order.lawyer_id]))
+    result = order_out(order, user_briefs(db, [order.client_id, order.lawyer_id]))
+    settings = get_settings()
+    delivery = db.query(Delivery).filter_by(order_id=order.id, status="submitted").order_by(Delivery.created_at.desc()).first() if order.status == "pending_receipt" else None
+    result["auto_accept_at"] = trade.aware(delivery.created_at) + timedelta(days=settings.delivery_auto_accept_days) if delivery else None
+    result["after_sales_until"] = trade.aware(order.completed_at) + timedelta(days=settings.after_sales_window_days) if order.completed_at and order.settlement_status != "settled" else None
+    contract = db.query(Document.id).filter_by(order_id=order.id, doc_type="service_contract").order_by(Document.created_at).first()
+    result["contract_id"] = contract[0] if contract else None
+    return result
 
 
 @router.post("/orders/{order_id}/confirm")

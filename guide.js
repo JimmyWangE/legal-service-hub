@@ -1,4 +1,5 @@
 import { label, statusTone } from "./labels.js";
+import { lawyerIncome } from "./market-view.js";
 import { ago, empty, esc, icon, money, status } from "./ui.js";
 
 const guides = {
@@ -51,7 +52,13 @@ export function todoItems({ state, user, viewRole, unreadChats = 0 }) {
     if (order.status === "pending_confirm" && !(lawyer ? order.lawyer_confirmed_at : order.client_confirmed_at)) items.push(["doc", `请确认服务合同：${title}`, href, "确认合同"]);
     if (!lawyer && order.status === "pending_payment") items.push(["wallet", `待支付 ${money(order.price)}：${title}`, href, "去支付"]);
     if (!lawyer && order.status === "pending_receipt") items.push(["check", `律师已提交交付，请验收：${title}`, href, "去验收"]);
-    if (lawyer && order.status === "service") items.push(["briefcase", `服务进行中，待提交交付：${title}`, href, "去交付"]);
+    if (lawyer && order.status === "service") items.push([order.overdue ? "alert" : "briefcase", `${order.overdue ? "交付已逾期" : "服务进行中，待提交交付"}：${title}`, href, "去交付"]);
+  }
+  if (!lawyer) {
+    for (const request of state.requests.filter((item) => item.owner_id === user.id)) {
+      if (request.status === "quoting" && request.quote_count) items.push(["briefcase", `需求收到 <b>${request.quote_count}</b> 份律师报价：<b>${esc(request.title)}</b>`, `#/requests/${esc(request.id)}`, "比较报价"]);
+      if (request.status === "expired") items.push(["clock", `需求已过期，可重新开放报价：<b>${esc(request.title)}</b>`, `#/requests/${esc(request.id)}`, "去处理"]);
+    }
   }
   for (const doc of state.documents) {
     if ((doc.workflow || []).some((task) => task.assignee_id === user.id && task.status === "pending" && task.version === doc.locked_version)) items.push(["review", `文书等待你会签：<b>${esc(doc.title)}</b>`, `#/doc/${esc(doc.id)}`, "去会签"]);
@@ -82,7 +89,8 @@ function clientBench(context) {
   const orders = state.orders.filter((item) => item.client_id === user.id);
   const active = orders.filter((item) => ["pending_confirm", "pending_payment", "service", "pending_receipt"].includes(item.status));
   const list = todoItems(context);
-  return `${hero(user, "当事人", "从一次咨询开始，找到合适的律师，并在线完成委托、协作与验收。", '<a class="btn accent" href="#/model-chat">开始法律咨询</a><a class="btn on-dark" href="#/lawyers">浏览律师</a>')}
+  return `${hero(user, "当事人", "从一次咨询开始，找到合适的律师，并在线完成委托、协作与验收。", '<a class="btn accent" href="#/model-chat">开始法律咨询</a><a class="btn on-dark" href="#/services">服务套餐</a><a class="btn on-dark" href="#/lawyers">找律师</a>')}
+  <div class="entry-grid">${[["spark", "不确定怎么办？", "先向法律模型描述情况，梳理事实与下一步", "#/model-chat", "免费咨询"], ["briefcase", "需求明确", "合同审查、律师函等明码标价服务，直接委托", "#/services", "选服务套餐"], ["request", "情况复杂", "发布需求，多位律师给出方案与报价供你比较", "#/requests", "发布需求"]].map(([glyph, title, text, href, cta]) => `<a class="entry-card" href="${href}"><span class="kpi-icon">${icon(glyph)}</span><b>${title}</b><small>${text}</small><em>${cta} ${icon("arrow")}</em></a>`).join("")}</div>
   <div class="kpi-grid">${[["order", "进行中订单", active.length, "#/orders"], ["review", "待我处理", list.length, "#/home"], ["request", "我的需求", state.requests.filter((item) => item.owner_id === user.id).length, "#/requests"], ["spark", "咨询记录", state.consultations.length, "#/model-chat"]].map(kpi).join("")}</div>
   ${guideCard("client")}
   <div class="dash-grid">${todoSection(list)}<section class="surface"><div class="section-title"><h2>订单进度</h2><a class="link" href="#/orders">全部订单</a></div>${orderRows(orders, user)}</section></div>
@@ -93,12 +101,12 @@ function lawyerBench(context) {
   const { state, user } = context;
   const orders = state.orders.filter((item) => item.lawyer_id === user.id);
   const leads = state.requests.filter((item) => item.owner_id !== user.id && item.status === "quoting");
-  const income = orders.filter((item) => item.status === "completed").reduce((sum, item) => sum + Number(item.paid || 0), 0);
+  const income = lawyerIncome(state.orders, user, state.capabilities?.platform_fee_rate);
   const list = todoItems(context);
-  return `${hero(user, "律师", "查看新的需求线索，及时确认合同、推进履约，按期交付。", '<a class="btn accent" href="#/requests">浏览需求线索</a><a class="btn on-dark" href="#/messages">客户沟通</a>')}
-  <div class="kpi-grid">${[["request", "可报价线索", leads.length, "#/requests"], ["briefcase", "服务中订单", orders.filter((item) => ["service", "pending_receipt"].includes(item.status)).length, "#/orders"], ["review", "待我处理", list.length, "#/home"], ["wallet", "已完成订单收入", money(income), "#/orders", `${orders.filter((item) => item.status === "completed").length} 单已完成`]].map(kpi).join("")}</div>
+  return `${hero(user, "律师", "查看新的需求线索，及时确认合同、推进履约，按期交付。", '<a class="btn accent" href="#/requests">浏览需求线索</a><a class="btn on-dark" href="#/my-services">服务套餐</a><a class="btn on-dark" href="#/messages">客户沟通</a>')}
+  <div class="kpi-grid">${[["request", "可报价线索", leads.length, "#/requests"], ["briefcase", "服务中订单", orders.filter((item) => ["service", "pending_receipt"].includes(item.status)).length, "#/orders"], ["review", "待我处理", list.length, "#/home"], ["wallet", "已结算收入", money(income.settled), "#/orders", `待结算约 ${money(income.pending)}`]].map(kpi).join("")}</div>
   ${guideCard("lawyer")}
-  <div class="dash-grid">${todoSection(list)}<section class="surface"><div class="section-title"><h2>最新需求线索</h2><a class="link" href="#/requests">全部线索</a></div>${leads.length ? `<div class="recent-list">${leads.slice(0, 5).map((item) => `<a href="#/requests/${esc(item.id)}"><span class="recent-main"><b>${esc(item.title)}</b><small>${esc(item.region)} · ${esc(item.field)} · ${esc(item.service_type)}</small></span><span class="recent-side"><strong>${money(item.budget)}</strong><small>预算</small></span></a>`).join("")}</div>` : empty("暂无新线索", "", "当事人发布需求后会出现在这里", "request")}</section></div>
+  <div class="dash-grid">${todoSection(list)}<section class="surface"><div class="section-title"><h2>最新需求线索</h2><a class="link" href="#/requests">全部线索</a></div>${leads.length ? `<div class="recent-list">${leads.slice(0, 5).map((item) => `<a href="#/requests/${esc(item.id)}"><span class="recent-main"><b>${esc(item.title)}</b><small>${esc(item.region)} · ${esc(item.field)} · ${esc(item.service_type)}${item.quoted_by_me ? " · 已报价" : ""}</small></span><span class="recent-side"><strong>${money(item.budget)}</strong><small>预算</small></span></a>`).join("")}</div>` : empty("暂无新线索", "", "当事人发布需求后会出现在这里", "request")}</section></div>
   <section class="surface"><div class="section-title"><h2>我的订单</h2><a class="link" href="#/orders">全部订单</a></div>${orderRows(orders, user)}</section>`;
 }
 
@@ -113,7 +121,7 @@ export function operatorBench({ state, user }) {
   return `${hero(user, "运营", "审核律师资质、处理售后争议，关注平台转化与履约质量。", `<a class="btn accent" href="#/reviewLawyers">律师审核${m.pending_applications ? `（${m.pending_applications}）` : ""}</a><a class="btn on-dark" href="#/cases">售后处理${m.pending_cases ? `（${m.pending_cases}）` : ""}</a>`)}
   <div class="kpi-grid">${[["account", "注册用户", m.users, "#/home", `当事人 ${m.clients}`], ["lawyer", "认证律师", m.lawyers, "#/reviewLawyers"], ["wallet", "累计成交额", money(m.gmv), "#/home", `已支付 ${m.funnel.paid} 单`], ["alert", "待处理事项", m.pending_applications + m.pending_cases, "#/cases", `审核 ${m.pending_applications} · 售后 ${m.pending_cases}`]].map(kpi).join("")}</div>
   <div class="dash-grid">
-    <section class="surface"><div class="section-title"><h2>${icon("chart")} 服务转化漏斗</h2><small>咨询 → 完成</small></div><div class="funnel">${funnel.map(([key, title]) => `<div class="funnel-row"><span>${title}</span><div class="funnel-bar"><i style="width:${Math.max(2, ((m.funnel[key] || 0) / top) * 100)}%"></i></div><b>${m.funnel[key] || 0}</b></div>`).join("")}</div></section>
+    <section class="surface"><div class="section-title"><h2>${icon("chart")} 服务转化漏斗</h2><small>咨询 → 完成</small></div><div class="funnel">${funnel.map(([key, title]) => `<div class="funnel-row"><span>${title}</span><progress class="funnel-bar" max="${top}" value="${m.funnel[key] || 0}" aria-label="${title}"></progress><b>${m.funnel[key] || 0}</b></div>`).join("")}</div></section>
     <section class="surface"><div class="section-title"><h2>履约质量</h2></div><div class="metric-grid">${[["支付成功率", percent(m.payment_success_rate)], ["退款率", percent(m.refund_rate)], ["争议率", percent(m.dispute_rate)], ["平均评分", m.avg_rating ? `${m.avg_rating} / 5` : "暂无"], ["刑事咨询", m.consultations_criminal], ["高风险咨询", m.consultations_high_risk]].map(([title, value]) => `<div class="metric"><small>${title}</small><strong>${value}</strong></div>`).join("")}</div></section>
   </div>
   <section class="surface"><div class="section-title"><h2>订单状态分布</h2><a class="link" href="#/orders">查看订单</a></div>${statuses.length ? `<div class="status-dist">${statuses.map(([key, count]) => `<div>${status(label(key), statusTone(key))}<b>${count}</b></div>`).join("")}</div>` : empty("暂无订单数据")}</section>`;

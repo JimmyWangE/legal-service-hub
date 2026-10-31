@@ -99,18 +99,22 @@ test("登录页左侧宣传、右侧表单，注册保留安全问答字段", ()
 test("工作台按视图展示用户/律师指导与待办", () => {
   const state = { consultations: [], requests: [], orders: [order("pending_payment"), order("pending_receipt")], documents: [doc] };
   const html = renderWorkbench({ state, user: client, viewRole: "client", roleName: "当事人", unreadChats: 3 });
-  assert.match(html, /用户使用指导/);
-  assert.match(html, /订单待支付/);
-  assert.match(html, /交付待确认收悉/);
-  assert.match(html, /文书待你会签/);
+  assert.match(html, /当事人快速上手/);
+  assert.match(html, /待支付 ¥1,800\.00/);
+  assert.match(html, /律师已提交交付，请验收/);
+  assert.match(html, /文书等待你会签/);
   assert.match(html, /3<\/b> 条未读/);
-  assert.match(renderWorkbench({ state, user: lawyer, viewRole: "lawyer", roleName: "律师", unreadChats: 0 }), /律师使用指导/);
+  assert.match(html, /href="#\/services"/);
+  const lawyerHtml = renderWorkbench({ state: { ...state, orders: [order("completed", { settlement_status: "settled", platform_fee: "180.00" }), order("completed", { id: "O-2", paid: "1000.00" })], capabilities: { platform_fee_rate: 0.1 } }, user: lawyer, viewRole: "lawyer", roleName: "律师", unreadChats: 0 });
+  assert.match(lawyerHtml, /律师快速上手/);
+  assert.match(lawyerHtml, /已结算收入<\/small><strong>¥1,620\.00/);
+  assert.match(lawyerHtml, /待结算约 ¥900\.00/);
 });
 
 test("订单列表按状态筛选与搜索，详情给出当前角色的下一步", () => {
   const orders = ["pending_payment", "service", "pending_receipt", "completed", "disputed"].map((value) => order(value));
   setOrderFilter("service");
-  assert.equal((renderOrderList({ orders, user: client, badge }).match(/class="item-card"/g) || []).length, 1);
+  assert.equal((renderOrderList({ orders, user: client, badge }).match(/class="item-card order-card"/g) || []).length, 1);
   setOrderFilter("all");
   setOrderQuery("completed");
   assert.match(renderOrderList({ orders, user: client, badge }), /订单completed/);
@@ -134,7 +138,7 @@ test("文书详情转义正文、展示成员姓名与会签操作", () => {
   assert.match(html, /2\. 陈先生/);
   assert.match(html, /data-action="confirm-document"/);
   assert.match(html, /readonly/);
-  assert.match(renderDocumentList({ documents: [doc], user: client, badge }), /待你确认 v2/);
+  assert.match(renderDocumentList({ documents: [doc], user: client, badge }), /待你会签 v2/);
   assert.match(workflowModalBody(doc), /value="L1" checked> 林律师[\s\S]*value="C1" checked> 陈先生/);
   assert.match(renderDocumentDetail({ item: { ...doc, versions: [{ ...doc.versions[1], body: null }] }, user: client, badge, operator: true }), /运营仅可查看业务元数据/);
 });

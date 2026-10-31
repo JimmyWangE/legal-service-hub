@@ -87,6 +87,15 @@ def license_reminders():
             notify(db, profile.user_id, "执业证有效期提醒", f"执业证有效期为{profile.expires_on}；过期后停止新接单，请更新资质申请。", "license_expiry", marker)
 
 
+def business_deadlines():
+    from app.services.maintenance import run_due_jobs
+
+    with SessionLocal.begin() as db:
+        result = run_due_jobs(db)
+    if any(result.values()):
+        logger.info("business_deadlines %s", " ".join(f"{key}={value}" for key, value in result.items()))
+
+
 def stop(signum, frame):
     global running
     running = False
@@ -106,6 +115,7 @@ def main():
                 probe_future = probe_executor.submit(synthetic_checks)
             if time.monotonic() - last_reminder >= 3600:
                 license_reminders()
+                business_deadlines()
                 last_reminder = time.monotonic()
         except Exception:
             logger.error("worker_cycle_failed")

@@ -7,7 +7,7 @@ export const statusLabels = {
   unpaid: "未支付", paid: "已支付", creating: "支付单创建中", created: "等待支付", success: "支付成功", failed: "支付失败",
   frozen: "暂不结算", refunded: "已全额退款", partially_refunded: "部分退款",
   // 需求 / 报价
-  quoting: "报价中", ordered: "已下单", valid: "有效", accepted: "已接受", expired: "已失效", withdrawn: "已撤回",
+  quoting: "报价中", ordered: "已下单", valid: "有效", accepted: "已接受", expired: "已过期", withdrawn: "已撤回", settled: "已结算",
   // 文书 / 会签
   draft: "草稿", signing: "会签中", confirmed: "已确认", returned: "已退回", archived: "已归档", waiting: "待轮到",
   // 售后 / 审核
@@ -16,7 +16,7 @@ export const statusLabels = {
 };
 
 const tones = {
-  success: ["completed", "paid", "success", "confirmed", "approved", "accepted", "refunded", "valid"],
+  success: ["completed", "paid", "success", "confirmed", "approved", "accepted", "refunded", "valid", "settled"],
   danger: ["disputed", "refund_pending", "refund_processing", "returned", "rejected", "failed", "frozen_lawyer"],
   muted: ["closed", "cancelled", "expired", "withdrawn", "archived", "unpaid", "waiting", "draft"],
   info: ["service", "signing", "quoting", "ordered", "under_review", "submitted", "pending_receipt", "creating", "created", "partially_refunded"],
@@ -50,8 +50,10 @@ export const auditActions = {
   "lawyer.applied": "提交律师申请", "lawyer.reviewed": "审核律师申请", "lawyer.frozen": "冻结律师", "lawyer.unfrozen": "恢复律师接单", "lawyer.withdrawn": "撤回律师申请", "lawyer.credential.downloaded": "下载资质材料",
   "account.registered": "注册账户", "password.changed": "修改密码", "chat.opened": "发起交流", "file.uploaded": "上传文件", "payment.reconciled": "支付对账",
   "consultation.message": "模型咨询", "consultation.deleted": "删除咨询", "user.avatar.updated": "更新头像",
+  "request.reopened": "重新开放需求", "request.invited": "邀请律师报价", "request.expired": "需求过期", "delivery.auto_accepted": "自动确认验收",
+  "order.settled": "订单结算", "lawyer.profile.updated": "更新律师资料", "lawyer.service.saved": "保存服务套餐", "user.profile.updated": "修改个人资料", "maintenance.run": "执行到期任务",
 };
-export const objectTypes = { request: "需求", quote: "报价", order: "订单", payment: "支付", delivery: "交付", case: "售后", document: "文书", comment: "批注", lawyer: "律师", lawyer_application: "律师申请", consultation: "咨询", user: "用户", refund: "退款" };
+export const objectTypes = { request: "需求", quote: "报价", order: "订单", payment: "支付", delivery: "交付", case: "售后", document: "文书", comment: "批注", lawyer: "律师", lawyer_application: "律师申请", consultation: "咨询", user: "用户", refund: "退款", lawyer_service: "服务套餐", system: "系统" };
 
 export const domains = ["民事", "刑事", "行政", "非诉"];
 export const fields = ["合同纠纷", "劳动争议", "婚姻家事", "侵权责任", "公司商事", "交通事故", "借贷纠纷", "房产物业", "知识产权", "刑事辩护", "刑事控告", "其他"];
