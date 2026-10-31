@@ -267,3 +267,56 @@ class NotificationOut(APIModel):
     object_id: str
     read_at: datetime | None
     created_at: datetime
+
+
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=40)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class RequestReopen(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    deadline: date
+
+
+class LawyerInvite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lawyer_id: str = Field(min_length=1, max_length=36)
+
+
+class LawyerProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    bio: str = Field(default="", max_length=1000)
+    practice_years: int = Field(default=0, ge=0, le=60)
+    specialties: list[str] = Field(default_factory=list, max_length=6)
+    mode: str = Field(default="线上服务", min_length=1, max_length=100)
+    available: bool = True
+
+    @field_validator("specialties")
+    @classmethod
+    def bounded_specialties(cls, value):
+        return [str(item).strip()[:20] for item in value if str(item).strip()]
+
+
+class LawyerServiceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=2, max_length=100)
+    service_type: str = Field(min_length=1, max_length=100)
+    field: str = Field(min_length=1, max_length=100)
+    description: str = Field(min_length=8, max_length=2000)
+    deliverables: str = Field(min_length=2, max_length=1000)
+    price: Decimal = Field(ge=Decimal("1"), le=Decimal("1000000"), decimal_places=2)
+    days: int = Field(ge=1, le=365)
+    active: bool = True
+
+
+class ServicePurchase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    facts: str = Field(min_length=8, max_length=12000)
+    region: str = Field(min_length=1, max_length=100)
+    attachment_file_ids: list[str] = Field(default_factory=list, max_length=8)

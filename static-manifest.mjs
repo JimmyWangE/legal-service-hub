@@ -2,6 +2,7 @@ export const publicFiles = new Set([
   "index.html", "app.js", "api-client.js", "auth-state.js", "model-consultation.js",
   "ui.js", "styles.css", "model-consultation.css", "remote.css", "platform.css",
   "auth-view.js", "guide.js", "orders-view.js", "documents-view.js", "chat.js", "account-view.js", "labels.js", "request-attachments.js",
+  "requests-view.js", "admin-view.js", "market-view.js",
 ]);
 
 export function isPublicFile(relative) {

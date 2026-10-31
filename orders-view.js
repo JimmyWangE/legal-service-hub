@@ -16,6 +16,8 @@ const stage = { pending_confirm: 0, pending_payment: 1, service: 2, pending_rece
 const afterSales = ["refund_pending", "disputed"];
 const ended = ["closed", "cancelled"];
 const badge = (value) => status(label(value), statusTone(value));
+const settlementLabels = { frozen: "资金暂存中", pending: "待结算（售后期内）", settled: "已结算", refunded: "已全额退款", partially_refunded: "部分退款" };
+const daysLeft = (value) => Math.ceil((new Date(value).getTime() - Date.now()) / 86400000);
 
 export function setOrderFilter(value) { view.filter = value; }
 export function setOrderQuery(value) { view.query = value; }
@@ -32,7 +34,7 @@ export function renderOrderCards({ orders, user }) {
   return items.map((order) => {
     const other = counterpart(order, user);
     const step = stage[order.status];
-    return `<a class="item-card order-card" href="#/order/${esc(order.id)}"><header><h3>${esc(order.title)}</h3>${badge(order.status)}</header><div class="meta"><span>${icon("lawyer")}${other.label}：${esc(other.name || "—")}</span><span>#${shortId(order.id)}</span></div>${step !== undefined ? `<div class="mini-progress" aria-label="进度 ${step + 1}/5">${progress.map((_, index) => `<i class="${index <= step ? "on" : ""}"></i>`).join("")}</div>` : ""}<footer><div class="amount">${money(order.price)}<small>${Number(order.paid) > 0 ? `已付 ${money(order.paid)}` : "未支付"}</small></div><span class="meta">${ago(order.updated_at || order.created_at)}更新</span></footer></a>`;
+    return `<a class="item-card order-card" href="#/order/${esc(order.id)}"><header><h3>${esc(order.title)}</h3>${badge(order.status)}</header><div class="meta"><span>${icon("lawyer")}${other.label}：${esc(other.name || "—")}</span><span>#${shortId(order.id)}</span>${order.overdue ? '<span class="status danger">交付逾期</span>' : ""}</div>${step !== undefined ? `<div class="mini-progress" aria-label="进度 ${step + 1}/5">${progress.map((_, index) => `<i class="${index <= step ? "on" : ""}"></i>`).join("")}</div>` : ""}<footer><div class="amount">${money(order.price)}<small>${Number(order.paid) > 0 ? `已付 ${money(order.paid)}` : "未支付"}</small></div><span class="meta">${ago(order.updated_at || order.created_at)}更新</span></footer></a>`;
   }).join("");
 }
 
@@ -70,11 +72,18 @@ function nextAction({ item, user, capabilities, reviews = [] }) {
     const note = capabilities.payments_enabled ? (capabilities.payment_simulation_enabled ? "当前为模拟支付环境：生成支付单后点击“我已完成支付”即可，不会产生真实扣款。" : "支付结果以支付机构通知为准，完成支付后页面会自动刷新。") : "平台暂未开放在线支付，请联系平台运营。";
     return ["", `待支付 ${money(item.price)}`, note, `${create}${cancel}`, block.html];
   }
-  if (item.status === "service") return lawyer ? ["", "服务进行中，请按期提交交付物", `约定 ${item.days || "—"} 天内交付。在“订单文书”中起草或上传交付文书，完成后提交给当事人验收。`, `${button("delivery-modal", `${icon("check")} 提交交付物`, "", true)}${button("new-document", "新建文书", `data-order="${esc(item.id)}"`)}`] : ["", "律师正在为你服务", "律师完成后会提交交付物并通知你验收，期间可随时在线沟通。", button("open-chat", `${icon("message")} 联系律师`, `data-peer="${esc(item.lawyer_id)}" data-order="${esc(item.id)}"`, true)];
-  if (item.status === "pending_receipt") return client ? ["", "请验收交付物", "查看下方交付记录中的文书。满意请确认验收；需要修改请退回并说明原因。", `${button("accept-delivery", `${icon("check")} 确认验收`, "", true)}${button("return-delivery", "退回修改")}`] : ["", "等待当事人验收", "当事人确认后订单完成；如被退回，会通知你具体修改意见。", ""];
+  if (item.status === "service") {
+    const due = item.due_date ? `约定 ${dateOnly(item.due_date)} 前交付${item.overdue ? "，<b>已逾期</b>" : `（剩余 ${Math.max(0, daysLeft(`${item.due_date}T23:59:59+08:00`))} 天）`}` : `约定 ${item.days || "—"} 天内交付`;
+    return lawyer ? [item.overdue ? "alert" : "", item.overdue ? "交付已逾期，请尽快提交或与当事人沟通" : "服务进行中，请按期提交交付物", `${due}。在“订单文书”中起草或上传交付文书，完成后提交给当事人验收。`, `${button("delivery-modal", `${icon("check")} 提交交付物`, "", true)}${button("new-document", "新建文书", `data-order="${esc(item.id)}"`)}`, "", true] : [item.overdue ? "alert" : "", item.overdue ? "律师交付已逾期" : "律师正在为你服务", `${due}。律师完成后会提交交付物并通知你验收，期间可随时在线沟通${item.overdue ? "；如需退款可申请售后" : ""}。`, button("open-chat", `${icon("message")} 联系律师`, `data-peer="${esc(item.lawyer_id)}" data-order="${esc(item.id)}"`, true), "", true];
+  }
+  if (item.status === "pending_receipt") {
+    const auto = item.auto_accept_at ? `${dateOnly(item.auto_accept_at)} 前未处理将自动确认验收` : "";
+    return client ? ["", "请验收交付物", `查看下方交付记录中的文书。满意请确认验收；需要修改请退回并说明原因。${auto ? `<b>${auto}</b>。` : ""}`, `${button("accept-delivery", `${icon("check")} 确认验收`, "", true)}${button("return-delivery", "退回修改")}`, "", true] : ["", "等待当事人验收", `当事人确认后订单完成；如被退回，会通知你具体修改意见。${auto ? `${auto}。` : ""}`, "", "", true];
+  }
   if (item.status === "completed") {
     const reviewed = reviews.some((entry) => entry.author_id === user.id);
-    return ["done", "订单已完成", party && !reviewed ? `邀请你为本次合作打分，帮助${client ? "其他当事人选择律师" : "平台改进服务"}。` : "感谢使用平台服务，交付文书可在文书中心随时查看。", `${party && !reviewed ? button("review-modal", `${icon("star")} 评价${client ? "律师" : "当事人"}`, "", true) : ""}${button("export-evidence", `${icon("download")} 导出存证包`)}`];
+    const settle = item.settlement_status === "settled" ? (lawyer ? `已于 ${dateOnly(item.settled_at)} 结算，服务收入 ${money(Number(item.paid) - Number(item.platform_fee))}（平台服务费 ${money(item.platform_fee)}）。` : "") : item.after_sales_until ? `售后期至 ${dateOnly(item.after_sales_until)}${lawyer ? `，期满且无争议后结算，预计收入 ${money(Number(item.paid) * (1 - Number(capabilities.platform_fee_rate || 0)))}` : "，期间如有问题可申请售后"}。` : "";
+    return ["done", "订单已完成", `${party && !reviewed ? `邀请你为本次合作打分，帮助${client ? "其他当事人选择律师" : "平台改进服务"}。` : "感谢使用平台服务，交付文书可在文书中心随时查看。"}${settle}`, `${party && !reviewed ? button("review-modal", `${icon("star")} 评价${client ? "律师" : "当事人"}`, "", true) : ""}${button("export-evidence", `${icon("download")} 导出存证包`)}`];
   }
   if (afterSales.includes(item.status)) return ["alert", item.status === "disputed" ? "争议处理中" : "退款处理中", "平台运营正在处理，期间结算暂停。处理结果会通过服务通知告知双方。", ""];
   if (item.status === "cancelled") return ["muted", "订单已取消", `取消原因：${item.closed_reason || "—"}。需求已重新开放报价。`, ""];
@@ -99,16 +108,16 @@ export function renderOrderDetail(context) {
   const client = item.client_id === user.id;
   const party = client || item.lawyer_id === user.id;
   const reviews = item.reviews || [];
-  const [tone, title, text, actions, extra = ""] = nextAction({ ...context, reviews });
+  const [tone, title, text, actions, extra = "", rich = false] = nextAction({ ...context, reviews });
   const payments = item.payments || [];
   const parties = [["委托人", item.client_id, item.client_name, item.client_confirmed_at], ["承办律师", item.lawyer_id, item.lawyer_name, item.lawyer_confirmed_at]];
   const paid = Number(item.paid) > 0;
-  const canAfterSales = party && paid && ["service", "pending_receipt", "completed"].includes(item.status);
+  const canAfterSales = party && paid && ["service", "pending_receipt", "completed"].includes(item.status) && item.settlement_status !== "settled";
   return `<a class="back-link" href="#/orders">${icon("back")} 返回订单列表</a>
   <section class="surface detail-hero-card"><div class="detail-hero"><div><div class="badges">${badge(item.status)}${paid ? badge(item.payment_status) : ""}</div><h1>${esc(item.title)}</h1><div class="meta"><button type="button" class="copy-id" data-action="copy-id" data-value="${esc(item.id)}" title="复制完整订单号">订单号 #${shortId(item.id)} ${icon("copy")}</button><span>创建于 ${date(item.created_at)}</span></div></div><div class="price"><small>订单金额</small><strong>${money(item.price)}</strong><small>${paid ? `已付 ${money(item.paid)}` : "尚未支付"}</small></div></div>${stepper(item)}</section>
-  <section class="next-action ${tone}"><div class="next-body"><h3>${esc(title)}</h3>${text ? `<p>${esc(text)}</p>` : ""}${extra}</div>${actions ? `<div class="actions">${actions}</div>` : ""}</section>
+  <section class="next-action ${tone}"><div class="next-body"><h3>${esc(title)}</h3>${text ? `<p>${rich ? text : esc(text)}</p>` : ""}${extra}</div>${actions ? `<div class="actions">${actions}</div>` : ""}</section>
   <div class="detail-grid-2"><div>
-    <section class="surface"><div class="section-title"><h2>服务方案</h2>${button("refresh", `${icon("history")} 刷新`, 'aria-label="刷新订单"', "ghost sm")}</div><dl class="data-list"><div class="wide"><dt>服务范围</dt><dd>${esc(item.scope)}</dd></div><div class="wide"><dt>交付物</dt><dd>${esc(item.deliverables || "—")}</dd></div><div><dt>交付周期</dt><dd>${item.days ? `${item.days} 天` : "—"}</dd></div><div><dt>付款方式</dt><dd>${esc(item.payment_terms || "确认合同后一次性支付")}</dd></div><div><dt>结算状态</dt><dd>${esc(label(item.settlement_status))}</dd></div><div><dt>最近更新</dt><dd>${date(item.updated_at)}</dd></div></dl></section>
+    <section class="surface"><div class="section-title"><h2>服务方案</h2>${button("refresh", `${icon("history")} 刷新`, 'aria-label="刷新订单"', "ghost sm")}</div><dl class="data-list"><div class="wide"><dt>服务范围</dt><dd>${esc(item.scope)}</dd></div><div class="wide"><dt>交付物</dt><dd>${esc(item.deliverables || "—")}</dd></div><div><dt>交付周期</dt><dd>${item.days ? `${item.days} 天` : "—"}${item.due_date ? `<small class="muted block">约定 ${dateOnly(item.due_date)} 前交付</small>` : ""}</dd></div><div><dt>付款方式</dt><dd>${esc(item.payment_terms || "确认合同后一次性支付")}</dd></div><div><dt>资金状态</dt><dd>${esc(Number(item.paid) > 0 ? settlementLabels[item.settlement_status] || label(item.settlement_status) : "未支付")}</dd></div><div><dt>最近更新</dt><dd>${date(item.updated_at)}</dd></div></dl></section>
     <section class="surface"><div class="section-title"><h2>订单文书</h2>${party && ["service", "pending_receipt", "completed"].includes(item.status) ? button("new-document", `${icon("plus")} 新建文书`, `data-order="${esc(item.id)}"`, "sm") : '<small>支付后可创建履约文书</small>'}</div>${documents.length ? `<div class="mini-list">${documents.map((doc) => `<a class="mini-row" href="#/doc/${esc(doc.id)}"><span class="doc-icon">${icon("doc")}</span><span class="grow"><b>${esc(doc.title)}</b><small>${esc(docTypes[doc.doc_type] || "文书")} · v${doc.current_version}</small></span>${badge(doc.status)}</a>`).join("")}</div>` : empty("暂无订单文书", "", "", "doc")}</section>
     <section class="surface"><h2>交付记录</h2>${(item.deliveries || []).length ? `<ul class="timeline-list">${item.deliveries.map((delivery) => `<li><div>${badge(delivery.status === "submitted" ? "pending_receipt" : delivery.status === "accepted" ? "accepted" : "returned")} <a class="link" href="#/doc/${esc(delivery.document_id)}">查看交付文书</a></div>${delivery.note ? `<p>${esc(delivery.note)}</p>` : ""}<small>${date(delivery.created_at)}</small></li>`).join("")}</ul>` : empty("暂无交付记录", "", "", "check")}</section>
     ${(item.cases || []).length ? `<section class="surface"><h2>售后记录</h2><ul class="timeline-list">${item.cases.map((entry) => `<li><div><b>${esc(caseTypes[entry.case_type] || entry.case_type)}</b> ${badge(entry.status)}${Number(entry.amount) > 0 ? ` · ${money(entry.amount)}` : ""}</div><p>${esc(entry.reason)}</p>${entry.resolution ? `<p class="resolution">处理结果：${esc(entry.resolution)}</p>` : ""}<small>${date(entry.created_at)}</small></li>`).join("")}</ul></section>` : ""}
@@ -116,7 +125,7 @@ export function renderOrderDetail(context) {
   </div><aside>
     <section class="surface"><h2>参与方</h2>${parties.map(([role, id, name, confirmedAt]) => `<div class="party">${avatar({ name })}<div class="grow"><b>${esc(name || "—")}</b><small>${role}${id === user.id ? "（我）" : ""}</small>${item.status === "pending_confirm" ? `<div>${confirmState(confirmedAt)}</div>` : ""}</div>${id !== user.id && party ? button("open-chat", icon("message"), `data-peer="${esc(id)}" data-order="${esc(item.id)}" aria-label="与${esc(name || role)}交流" title="在线交流"`, "icon-only") : ""}</div>`).join("")}</section>
     <section class="surface"><h2>支付记录</h2>${payments.length ? `<div class="mini-list">${payments.map((payment) => `<div class="mini-row"><span class="grow"><b>${money(payment.amount)}</b><small>${date(payment.created_at)}</small></span>${badge(payment.status)}</div>`).join("")}</div>` : empty("暂无支付记录", "", "", "wallet")}</section>
-    ${canAfterSales ? `<section class="surface"><h2>售后服务</h2><p class="muted">${client ? "对服务有异议或需要退款，可申请平台介入。订单完成 15 天内可申请。" : "与当事人存在履约争议时，可申请平台介入处理。"}</p>${button("after-sales-modal", client ? "申请退款 / 争议处理" : "申请争议处理", "", "block")}</section>` : ""}
+    ${canAfterSales ? `<section class="surface"><h2>售后服务</h2><p class="muted">${client ? `对服务有异议或需要退款，可申请平台介入。订单完成 ${context.capabilities?.after_sales_window_days || 15} 天内可申请。` : "与当事人存在履约争议时，可申请平台介入处理。"}</p>${button("after-sales-modal", client ? "申请退款 / 争议处理" : "申请争议处理", "", "block")}</section>` : ""}
     ${party ? `<section class="surface"><h2>交易存证</h2><p class="muted">导出包含合同、文书版本指纹、会签、支付、交付与操作日志的存证包。</p>${button("export-evidence", `${icon("download")} 导出存证包`, "", "block")}</section>` : ""}
   </aside></div>`;
 }

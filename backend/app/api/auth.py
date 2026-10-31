@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import current_user
 from app.core.security import create_access_token
-from app.schemas import AvatarUpdate, LoginRequest, LoginResponse, PasswordChange, RegisterRequest, RegistrationChallengeOut
+from app.schemas import AvatarUpdate, LoginRequest, LoginResponse, PasswordChange, ProfileUpdate, RegisterRequest, RegistrationChallengeOut
 from app.services.identity import create_registration_challenge, login, register
 from app.api.serializers import user_out
 
@@ -37,7 +37,7 @@ def me(db: Session = Depends(get_db), user=Depends(current_user)):
 
     result = user_out(user)
     profile = db.get(LawyerProfile, user.id)
-    result["lawyer_profile"] = {"status": profile.status, "expires_on": profile.expires_on, "available": profile.available, "can_quote": active_lawyer(user, profile)} if profile else None
+    result["lawyer_profile"] = {"status": profile.status, "expires_on": profile.expires_on, "available": profile.available, "can_quote": active_lawyer(user, profile), "firm": profile.firm, "region": profile.region, "field": profile.field, "mode": profile.mode, "bio": profile.bio or "", "practice_years": profile.practice_years or 0, "specialties": profile.specialties or []} if profile else None
     application = db.query(LawyerApplication).filter_by(user_id=user.id).order_by(LawyerApplication.version.desc()).first()
     result["lawyer_application"] = {"id": application.id, "status": application.status, "version": application.version} if application else None
     return result
@@ -62,3 +62,18 @@ def update_avatar(payload: AvatarUpdate, db: Session = Depends(get_db), user=Dep
 
     apply_avatar(db, user, payload.data_url)
     return user_out(user)
+
+
+@router.patch("/me")
+def update_me(payload: ProfileUpdate, db: Session = Depends(get_db), user=Depends(current_user)):
+    from app.services.common import record_audit
+
+    user.name = payload.name
+    record_audit(db, user, "user.profile.updated", "user", user.id)
+    return user_out(user)
+
+
+@router.post("/refresh", response_model=LoginResponse)
+def refresh_session(user=Depends(current_user)):
+    """仍有效的访问令牌可换取新令牌，活跃用户不会在操作中途掉线；改密后旧令牌因版本号失效无法续期。"""
+    return {"access_token": create_access_token(user.id, user.role, user.token_version), "user": user_out(user)}

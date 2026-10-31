@@ -3,11 +3,11 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api.serializers import application_out, lawyer_out, order_out, quote_out, request_out, user_briefs
+from app.api.serializers import application_out, lawyer_out, order_out, quote_out, request_out, service_out, user_briefs
 from app.core.database import get_db
 from app.core.deps import current_user, idempotency_key, request_context
-from app.models import LawyerApplication, LawyerProfile, Order, Quote, ServiceRequest, StoredFile, User
-from app.schemas import LawyerApply, QuoteCreate, ReasonBody, RequestCreate, RequestUpdate
+from app.models import LawyerApplication, LawyerProfile, LawyerService, Order, OrderReview, Quote, ServiceRequest, StoredFile, User
+from app.schemas import LawyerApply, LawyerInvite, LawyerProfileUpdate, LawyerServiceIn, QuoteCreate, ReasonBody, RequestCreate, RequestReopen, RequestUpdate, ServicePurchase
 from app.services import identity, marketplace
 
 router = TransactionalRouter(tags=["marketplace"])
@@ -29,8 +29,11 @@ def list_requests(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
+    marketplace.expire_overdue_requests(db)
     items = marketplace.visible_requests(db, user, offset, limit, {"status": status, "domain": domain, "field": field, "region": region})
-    return [request_out(item, marketplace.request_view(db, user, item)) for item in items]
+    counts = marketplace.quote_counts(db, [item.id for item in items])
+    quoted = {row[0] for row in db.query(Quote.request_id).filter(Quote.lawyer_id == user.id, Quote.request_id.in_([item.id for item in items] or [""])).all()}
+    return [request_out(item, {**marketplace.request_view(db, user, item), "quote_count": counts.get(item.id, 0), "quoted_by_me": item.id in quoted}) for item in items]
 
 
 @router.put("/requests/{request_id}")
@@ -56,8 +59,26 @@ def get_request(request_id: str, db: Session = Depends(get_db), user: User = Dep
     from app.core.errors import require
 
     require(allowed, "无权访问此需求", 403, "forbidden")
+    require(engaged or item.owner_id == user.id or user.has_role("operator") or item.visibility == marketplace.PUBLIC_VISIBILITY, "无权访问此需求", 403, "forbidden")
+    marketplace.expire_overdue_requests(db)
     marketplace.expire_stale_quotes(db, item.id)
-    return request_out(item, marketplace.request_view(db, user, item))
+    return request_out(item, {**marketplace.request_view(db, user, item), "quote_count": marketplace.quote_counts(db, [item.id]).get(item.id, 0)})
+
+
+@router.post("/requests/{request_id}/reopen")
+def reopen_request(request_id: str, payload: RequestReopen, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    return request_out(marketplace.reopen_request(db, user, request_id, payload.deadline, context["request_id"]))
+
+
+@router.post("/requests/{request_id}/invitations")
+def invite_lawyer(request_id: str, payload: LawyerInvite, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    marketplace.invite_lawyer(db, user, request_id, payload.lawyer_id, context["request_id"])
+    return {"invited": True, "lawyer_id": payload.lawyer_id}
+
+
+@router.get("/quotes/mine")
+def my_quotes(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return [{**quote_out(quote), "request": {"id": request.id, "title": request.title, "status": request.status, "region": request.region, "service_type": request.service_type, "budget": request.budget, "visibility": request.visibility}} for quote, request in marketplace.my_quotes(db, user)]
 
 
 @router.get("/requests/{request_id}/files/{file_id}")
@@ -168,3 +189,70 @@ def lawyer_me(db: Session = Depends(get_db), user: User = Depends(current_user))
 
     require(profile is not None, "律师资质不存在", 404, "not_found")
     return lawyer_out(profile, user, private=True)
+
+
+
+@router.put("/lawyers/me/profile")
+def update_profile(payload: LawyerProfileUpdate, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    return lawyer_out(marketplace.update_lawyer_profile(db, user, payload, context["request_id"]), user, private=True)
+
+
+@router.get("/lawyers/me/services")
+def my_services(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return [service_out(item) for item in marketplace.services_of(db, user.id, include_inactive=True)]
+
+
+@router.post("/lawyers/me/services")
+def create_service(payload: LawyerServiceIn, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    return service_out(marketplace.save_service(db, user, payload, None, context["request_id"]))
+
+
+@router.put("/lawyers/me/services/{service_id}")
+def update_service(service_id: str, payload: LawyerServiceIn, db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    return service_out(marketplace.save_service(db, user, payload, service_id, context["request_id"]))
+
+
+def mask_name(name: str | None) -> str:
+    name = (name or "用户").strip()
+    return name[0] + "**" if len(name) > 1 else name + "**"
+
+
+@router.get("/lawyers/{lawyer_id}")
+def lawyer_detail(lawyer_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    from app.core.errors import require
+
+    profile = db.get(LawyerProfile, lawyer_id)
+    lawyer = db.get(User, lawyer_id)
+    require(profile is not None and lawyer is not None and profile.status == "approved" and lawyer.is_active, "律师不存在或资质已失效", 404, "not_found")
+    result = lawyer_out(profile, lawyer, stats=marketplace.lawyer_stats(db, [lawyer_id]).get(lawyer_id))
+    result["can_take_orders"] = marketplace.active_lawyer(lawyer, profile)
+    result["services"] = [service_out(item) for item in marketplace.services_of(db, lawyer_id)]
+    reviews = db.query(OrderReview, Order).join(Order, Order.id == OrderReview.order_id).filter(OrderReview.target_id == lawyer_id, Order.lawyer_id == lawyer_id).order_by(OrderReview.created_at.desc()).limit(10).all()
+    authors = user_briefs(db, [review.author_id for review, _ in reviews])
+    result["reviews"] = [{"rating": review.rating, "content": review.content, "author": mask_name(authors.get(review.author_id, {}).get("name")), "service_type": order.title, "created_at": review.created_at} for review, order in reviews]
+    return result
+
+
+@router.get("/services")
+def browse_services(field: str | None = Query(default=None, max_length=100), keyword: str | None = Query(default=None, max_length=50), db: Session = Depends(get_db), user: User = Depends(current_user)):
+    rows = marketplace.list_lawyers(db, None, None, True, None)
+    lawyers = {lawyer.id: (profile, lawyer) for profile, lawyer in rows}
+    query = db.query(LawyerService).filter(LawyerService.active.is_(True), LawyerService.lawyer_id.in_(list(lawyers) or [""]))
+    if field:
+        query = query.filter(LawyerService.field == field)
+    if keyword:
+        like = f"%{keyword.strip()}%"
+        from sqlalchemy import or_
+
+        query = query.filter(or_(LawyerService.title.like(like), LawyerService.description.like(like), LawyerService.service_type.like(like)))
+    services = query.order_by(LawyerService.sold.desc(), LawyerService.price).limit(100).all()
+    stats = marketplace.lawyer_stats(db, list({item.lawyer_id for item in services}))
+    def card(lawyer_id):
+        profile, lawyer = lawyers[lawyer_id]
+        return {"id": lawyer.id, "name": lawyer.name, "avatar": lawyer.avatar_data, "firm": profile.firm, "region": profile.region, **stats.get(lawyer_id, {})}
+    return [service_out(item, card(item.lawyer_id)) for item in services]
+
+
+@router.post("/services/{service_id}/purchase")
+def purchase_service(service_id: str, payload: ServicePurchase, db: Session = Depends(get_db), user: User = Depends(current_user), key: str | None = Depends(idempotency_key), context=Depends(request_context)):
+    return order_out(marketplace.purchase_service(db, user, service_id, payload, context["request_id"]))

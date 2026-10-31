@@ -59,7 +59,7 @@ export function bindRequestAttachments(root) {
     if (form.dataset.busy) return;
     try {
       selection.add(Array.from(input.files));
-      status.textContent = `已选择 ${selection.entries.length} 个附件，点击“确认发布”后上传`;
+      status.textContent = `已选择 ${selection.entries.length} 个附件，提交时一并上传`;
       paint();
     } catch (error) {
       status.textContent = error.message;

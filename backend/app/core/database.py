@@ -67,6 +67,10 @@ def init_db() -> None:
         ("orders", "completed_at", "TIMESTAMP"), ("quotes", "payment_terms", "TEXT NOT NULL DEFAULT ''"),
         ("consultations", "category", "VARCHAR(20) NOT NULL DEFAULT 'unsure'"), ("consultations", "intake_json", "JSON"),
         ("after_sales_cases", "resolved_by", "VARCHAR(36)"), ("after_sales_cases", "resolved_at", "TIMESTAMP"),
+        ("orders", "service_started_at", "TIMESTAMP"), ("orders", "settled_at", "TIMESTAMP"),
+        ("orders", "platform_fee", "NUMERIC(12, 2) NOT NULL DEFAULT 0"), ("service_requests", "service_id", "VARCHAR(36)"),
+        ("lawyer_profiles", "bio", "TEXT NOT NULL DEFAULT ''"), ("lawyer_profiles", "practice_years", "INTEGER NOT NULL DEFAULT 0"),
+        ("lawyer_profiles", "specialties", "JSON NOT NULL DEFAULT '[]'"),
     ):
         if column not in {item["name"] for item in inspect(engine).get_columns(table)}:
             with engine.begin() as connection:

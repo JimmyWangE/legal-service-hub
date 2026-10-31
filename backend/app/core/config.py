@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     model_temperature: float = 0.2
     model_fallback_to_stub: bool = False
     after_sales_window_days: int = 15
+    delivery_auto_accept_days: int = 7
+    platform_fee_rate: float = 0.1
     seed_demo_data: bool = True
     payment_provider: str = "disabled"
     payment_stub_enabled: bool = False
@@ -123,6 +125,8 @@ class Settings(BaseSettings):
                 raise ValueError("trusted payment verification keys unavailable")
         if self.app_env == "production" and not self.public_base_url.startswith("https://"):
             raise ValueError("production requires a public HTTPS base URL")
+        if not 0 <= self.platform_fee_rate < 1 or self.delivery_auto_accept_days <= 0:
+            raise ValueError("platform fee rate must be in [0, 1) and auto-accept days positive")
         if self.rate_limit_per_minute <= 0 or self.model_max_concurrency <= 0 or self.database_pool_size <= 0:
             raise ValueError("deployed rate and concurrency limits must be positive")
         return self
@@ -131,7 +135,7 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     if os.getenv("APP_ENV") in {"staging", "production"}:
-        prefixes = ("APP_", "MODEL_", "PAYMENT_", "WECHATPAY_", "ALIPAY_", "DATABASE_", "JWT_", "SEED_DEMO_", "REDIS_", "SMTP_", "UPLOAD_", "MAX_UPLOAD_", "CORS_", "ACCESS_TOKEN_", "REFRESH_TOKEN_", "RATE_LIMIT_", "READY_", "HEALTH_", "ALLOW_RATE_", "REQUIRE_VERIFIED_", "PUBLIC_BASE_", "PROMETHEUS_")
+        prefixes = ("APP_", "MODEL_", "PAYMENT_", "WECHATPAY_", "ALIPAY_", "DATABASE_", "JWT_", "SEED_DEMO_", "REDIS_", "SMTP_", "UPLOAD_", "MAX_UPLOAD_", "CORS_", "ACCESS_TOKEN_", "REFRESH_TOKEN_", "RATE_LIMIT_", "READY_", "HEALTH_", "ALLOW_RATE_", "REQUIRE_VERIFIED_", "PUBLIC_BASE_", "PROMETHEUS_", "PLATFORM_FEE_", "DELIVERY_AUTO_", "AFTER_SALES_")
         known = {name.upper() for name in Settings.model_fields}
         unknown = {name for name in os.environ if name.startswith(prefixes) and name not in known}
         if unknown:

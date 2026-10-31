@@ -67,12 +67,13 @@ def request_out(request: ServiceRequest, view: dict | None = None) -> dict:
         "service_type": request.service_type, "facts": mask_sensitive(request.facts) if view["masked"] else request.facts, "region": request.region,
         "budget": request.budget, "deadline": request.deadline, "deliverables": request.deliverables,
         "visibility": request.visibility, "status": request.status, "version": request.version,
+        "service_id": request.service_id, "quote_count": view.get("quote_count", 0), "quoted_by_me": view.get("quoted_by_me", False),
         "created_at": request.created_at,
     }
 
 
 def lawyer_out(profile: LawyerProfile, user: User, private: bool = False, stats: dict | None = None) -> dict:
-    result = {"id": user.id, "name": user.name, "avatar": user.avatar_data, "firm": profile.firm, "region": profile.region, "field": profile.field, "mode": profile.mode, "status": profile.status, "available": profile.available, "expires_on": profile.expires_on, **(stats or {})}
+    result = {"id": user.id, "name": user.name, "avatar": user.avatar_data, "firm": profile.firm, "region": profile.region, "field": profile.field, "specialties": profile.specialties or [], "bio": profile.bio or "", "practice_years": profile.practice_years or 0, "mode": profile.mode, "status": profile.status, "available": profile.available, "expires_on": profile.expires_on, **(stats or {})}
     if private:
         result.update(email=user.email, license_number=profile.license_number)
     return result
@@ -82,9 +83,21 @@ def quote_out(quote: Quote, lawyer: dict | None = None) -> dict:
     return {"id": quote.id, "request_id": quote.request_id, "lawyer_id": quote.lawyer_id, "lawyer": lawyer, "scope": quote.scope, "deliverables": quote.deliverables, "price": quote.price, "days": quote.days, "payment_terms": quote.payment_terms, "valid_until": quote.valid_until, "status": quote.status, "version": quote.version, "created_at": quote.created_at}
 
 
+def order_due_date(order: Order):
+    if not order.service_started_at or not order.days:
+        return None
+    from datetime import timedelta
+
+    return (order.service_started_at + timedelta(days=order.days)).date()
+
+
 def order_out(order: Order, people: dict | None = None) -> dict:
+    from datetime import date
+
     names = {"client_name": people[order.client_id]["name"] if people and order.client_id in people else None, "lawyer_name": people[order.lawyer_id]["name"] if people and order.lawyer_id in people else None}
-    return {**names, "id": order.id, "request_id": order.request_id, "quote_id": order.quote_id, "client_id": order.client_id, "lawyer_id": order.lawyer_id, "title": order.title, "scope": order.scope, "deliverables": order.deliverables, "days": order.days, "payment_terms": order.payment_terms, "price": order.price, "paid": order.paid, "status": order.status, "payment_status": order.payment_status, "settlement_status": order.settlement_status, "client_confirmed_at": order.client_confirmed_at, "lawyer_confirmed_at": order.lawyer_confirmed_at, "closed_reason": order.closed_reason, "completed_at": order.completed_at, "version": order.version, "created_at": order.created_at, "updated_at": order.updated_at}
+    due = order_due_date(order)
+    timing = {"service_started_at": order.service_started_at, "due_date": due, "overdue": bool(due and order.status == "service" and due < date.today()), "settled_at": order.settled_at, "platform_fee": order.platform_fee or 0}
+    return {**names, **timing, "id": order.id, "request_id": order.request_id, "quote_id": order.quote_id, "client_id": order.client_id, "lawyer_id": order.lawyer_id, "title": order.title, "scope": order.scope, "deliverables": order.deliverables, "days": order.days, "payment_terms": order.payment_terms, "price": order.price, "paid": order.paid, "status": order.status, "payment_status": order.payment_status, "settlement_status": order.settlement_status, "client_confirmed_at": order.client_confirmed_at, "lawyer_confirmed_at": order.lawyer_confirmed_at, "closed_reason": order.closed_reason, "completed_at": order.completed_at, "version": order.version, "created_at": order.created_at, "updated_at": order.updated_at}
 
 
 def payment_out(payment: Payment) -> dict:
@@ -112,4 +125,11 @@ def application_out(db, application):
     result["applicant_email"] = applicant.email if applicant else ""
     result["profile_status"] = profile.status if profile and profile.approved_application_id == application.id else None
     result["reviews"] = [{"decision": item.decision, "reason": item.reason, "version": item.version, "created_at": item.created_at} for item in db.query(LawyerReviewRecord).filter_by(application_id=application.id).order_by(LawyerReviewRecord.created_at).limit(100).all()]
+    return result
+
+
+def service_out(service, lawyer: dict | None = None) -> dict:
+    result = {name: getattr(service, name) for name in ("id", "lawyer_id", "title", "service_type", "field", "description", "deliverables", "price", "days", "active", "sold", "created_at")}
+    if lawyer is not None:
+        result["lawyer"] = lawyer
     return result

@@ -151,3 +151,27 @@ def payment_status(db: Session = Depends(get_db), user: User = Depends(current_u
 
     require(user.has_role("operator"), "仅运营可访问", 403, "forbidden")
     return {"pending_inbox": db.query(PaymentWebhookInbox).filter(PaymentWebhookInbox.status.in_(["pending", "retry"])).count(), "manual_review": db.query(PaymentWebhookInbox).filter_by(status="manual_review").count(), "pending_refunds": db.query(Refund).filter(Refund.status.in_(["pending", "processing"])).count(), "overpayments": db.query(PaymentTransaction).filter_by(status="overpayment_review").count()}
+
+
+@router.post("/maintenance/run")
+def run_maintenance(db: Session = Depends(get_db), user: User = Depends(current_user), context=Depends(request_context)):
+    """手动触发到期任务（Worker 每小时也会自动执行）：需求过期、交付自动验收、逾期提醒与订单结算。"""
+    from app.services.common import record_audit
+    from app.services.maintenance import run_due_jobs
+
+    require(user.has_role("operator"), "仅运营可执行", 403, "forbidden")
+    result = run_due_jobs(db)
+    record_audit(db, user, "maintenance.run", "system", "maintenance", result, context["request_id"])
+    return result
+
+
+@router.get("/settlements")
+def settlements(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    from sqlalchemy import func
+
+    from app.models import Order
+
+    require(user.has_role("operator"), "仅运营可访问", 403, "forbidden")
+    rows = dict(db.query(Order.settlement_status, func.count(Order.id)).filter(Order.payment_status == "paid").group_by(Order.settlement_status).all())
+    fee = db.query(func.coalesce(func.sum(Order.platform_fee), 0)).filter(Order.settlement_status == "settled").scalar()
+    return {"by_status": rows, "platform_fee_total": fee}

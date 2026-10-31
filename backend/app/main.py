@@ -119,7 +119,7 @@ def model_readiness(request: Request):
 
 @app.get("/api/v1/capabilities", tags=["system"])
 def capabilities(request: Request):
-    return {"payment_provider": settings.payment_provider, "payments_enabled": settings.payment_provider != "disabled", "payment_simulation_enabled": settings.app_env != "production" and settings.payment_provider == "stub" and settings.payment_stub_enabled, "model_provider": settings.model_provider, "attachments_used_by_model": False, "email_verification_enabled": False, "registration_challenge_enabled": True, "consultation_available": request.app.state.health.snapshot()[1]["capabilities"]["consultation"]}
+    return {"payment_provider": settings.payment_provider, "payments_enabled": settings.payment_provider != "disabled", "payment_simulation_enabled": settings.app_env != "production" and settings.payment_provider == "stub" and settings.payment_stub_enabled, "model_provider": settings.model_provider, "attachments_used_by_model": False, "email_verification_enabled": False, "registration_challenge_enabled": True, "consultation_available": request.app.state.health.snapshot()[1]["capabilities"]["consultation"], "platform_fee_rate": settings.platform_fee_rate, "delivery_auto_accept_days": settings.delivery_auto_accept_days, "after_sales_window_days": settings.after_sales_window_days}
 
 
 @app.get("/metrics", tags=["system"])
