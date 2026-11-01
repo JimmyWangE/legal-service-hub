@@ -1,0 +1,143 @@
+/* 平台色彩系统：所有颜色只在这里定义，其余样式表只引用变量。
+   主色取自品牌标识的深海军蓝，点缀色为标识中的暖金色；默认浅色，用户可在顶栏切换为深色。 */
+:root {
+  color-scheme: light;
+  /* 中性色：带一点主色倾向的冷灰，避免纯黑纯白造成的刺眼对比 */
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --surface-2: #f8f9fb;
+  --surface-3: #eef1f5;
+  --line: #e3e8ee;
+  --line-strong: #d0d8e2;
+  --text: #1d2634;
+  --text-2: #465366;
+  --muted: #636f82;
+  --faint: #9aa4b3;
+  /* 品牌主色 */
+  --primary: #1f3a5f;
+  --primary-700: #172c48;
+  --primary-500: #2b5288;
+  --primary-ink: #1f3a5f;
+  --primary-100: #d8e3f1;
+  --primary-50: #edf2f9;
+  --on-primary: #ffffff;
+  /* 品牌点缀色（暖金） */
+  --accent: #b98232;
+  --accent-ink: #875a17;
+  --accent-soft: #fbf4e7;
+  --accent-line: #efdcb9;
+  --accent-fill: #e2b465;
+  --on-accent: #2b1d07;
+  /* 状态色：文字色 / 浅底 / 描边 / 实底 */
+  --success: #2a7a51;
+  --success-soft: #e8f5ee;
+  --success-line: #c4e3d0;
+  --success-fill: #2f855a;
+  --warning: #925f10;
+  --warning-soft: #fdf4e2;
+  --warning-line: #f0d8a8;
+  --danger: #b3392d;
+  --danger-soft: #fcefed;
+  --danger-line: #f2cbc5;
+  --danger-fill: #c0392b;
+  --info: #2b5c9c;
+  --info-soft: #ebf2fc;
+  --info-line: #c9daf1;
+  --info-fill: #3a6aa8;
+  --violet: #6a4fa3;
+  --violet-soft: #f3effa;
+  --violet-line: #ddd2ef;
+  --violet-fill: #7a5fb3;
+  /* 框架区域 */
+  --sidebar-bg: #ffffff;
+  --sidebar-text: var(--text-2);
+  --sidebar-heading: var(--muted);
+  --sidebar-hover: var(--surface-3);
+  --sidebar-active: var(--primary-50);
+  --sidebar-active-text: var(--primary-ink);
+  --topbar-bg: rgba(255, 255, 255, .88);
+  --hero-bg: radial-gradient(circle at 92% 0, rgba(226, 180, 101, .22), transparent 42%), linear-gradient(120deg, #e8eff8 0%, #f5f7fb 55%, #f8f4ec 100%);
+  --hero-line: #dbe4f0;
+  --brand-panel: radial-gradient(circle at 85% 10%, rgba(226, 180, 101, .28), transparent 40%), linear-gradient(150deg, #142640 0%, #1f3a5f 55%, #2b5288 100%);
+  --brand-gold: #ecc684;
+  /* 阴影与遮罩 */
+  --shadow-ink: #172c48;
+  --shadow: 0 1px 2px rgba(23, 44, 72, .04), 0 6px 18px rgba(23, 44, 72, .05);
+  --shadow-hover: 0 10px 24px rgba(23, 44, 72, .09);
+  --shadow-lg: 0 20px 60px rgba(23, 44, 72, .16);
+  --focus-ring: rgba(43, 82, 136, .16);
+  --overlay: rgba(15, 25, 40, .38);
+  --toast-bg: rgba(23, 38, 60, .94);
+  --selection: #d8e3f1;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e141d;
+  --surface: #151d29;
+  --surface-2: #19222f;
+  --surface-3: #202a39;
+  --line: #263243;
+  --line-strong: #344256;
+  --text: #e1e7ef;
+  --text-2: #b6c0cd;
+  --muted: #8a96a8;
+  --faint: #5e6a7c;
+  --primary: #3a65a3;
+  --primary-700: #4571b0;
+  --primary-500: #8fb5ea;
+  --primary-ink: #a8c5ee;
+  --primary-100: #24395a;
+  --primary-50: #18273c;
+  --on-primary: #ffffff;
+  --accent: #d3a359;
+  --accent-ink: #e5bd7d;
+  --accent-soft: #271f13;
+  --accent-line: #4a3b20;
+  --accent-fill: #d8ad65;
+  --on-accent: #1d1405;
+  --success: #6cc596;
+  --success-soft: #12261c;
+  --success-line: #1f4231;
+  --success-fill: #2f7d55;
+  --warning: #e0b25f;
+  --warning-soft: #272011;
+  --warning-line: #4a3b1c;
+  --danger: #ef8e83;
+  --danger-soft: #2b1715;
+  --danger-line: #4f2824;
+  --danger-fill: #c4483b;
+  --info: #8fb5ea;
+  --info-soft: #132236;
+  --info-line: #223a5b;
+  --info-fill: #3a65a3;
+  --violet: #b9a3e7;
+  --violet-soft: #201a31;
+  --violet-line: #3a2f56;
+  --violet-fill: #6f58a8;
+  --sidebar-bg: #111925;
+  --sidebar-text: var(--text-2);
+  --sidebar-heading: var(--muted);
+  --sidebar-hover: #1a2433;
+  --sidebar-active: #1c2c44;
+  --sidebar-active-text: #d4e3f7;
+  --topbar-bg: rgba(17, 25, 37, .88);
+  --hero-bg: radial-gradient(circle at 92% 0, rgba(211, 163, 89, .16), transparent 42%), linear-gradient(120deg, #172840 0%, #151f2e 60%, #1d1b18 100%);
+  --hero-line: #24364f;
+  --brand-panel: radial-gradient(circle at 85% 10%, rgba(211, 163, 89, .2), transparent 40%), linear-gradient(150deg, #0c1727 0%, #142640 55%, #1f3a5f 100%);
+  --brand-gold: #e5bd7d;
+  --shadow-ink: #000000;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .24), 0 6px 18px rgba(0, 0, 0, .18);
+  --shadow-hover: 0 10px 24px rgba(0, 0, 0, .32);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, .5);
+  --focus-ring: rgba(143, 181, 234, .22);
+  --overlay: rgba(3, 7, 12, .62);
+  --toast-bg: rgba(42, 54, 72, .96);
+  --selection: #2b4772;
+}
+
+html { background: var(--bg); accent-color: var(--primary-500); scrollbar-color: var(--line-strong) transparent; }
+::selection { background: var(--selection); }
+/* 切换主题的瞬间关闭过渡，避免各组件以不同速度变色 */
+:root.theme-switching *, :root.theme-switching *::before, :root.theme-switching *::after { transition: none !important; }
+img { color-scheme: normal; }
