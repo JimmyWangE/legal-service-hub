@@ -45,7 +45,8 @@
 ├── account-view.js                # 账号设置、头像与律师入驻
 ├── requests-view.js / market-view.js   # 需求与报价、律师目录/主页、服务套餐、帮助页
 ├── admin-view.js                  # 运营审核、售后、审计、通知与支付结算运维
-├── platform.css                   # 统一设计系统与布局
+├── theme.css / theme.js           # 色彩变量（浅色/深色两套）与首屏主题初始化
+├── platform.css                   # 统一设计系统与布局（颜色一律引用 theme.css 变量）
 ├── api-client.js                  # 同源 API、SSE 和幂等请求客户端
 ├── server.mjs                     # 静态服务器与 /api/v1 反向代理
 ├── assets/                        # 前端图标与静态资源

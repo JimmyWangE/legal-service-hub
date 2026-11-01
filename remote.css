@@ -2,14 +2,14 @@
 .remote-auth h1 { margin-top: 24px; }
 .remote-auth .field { margin: 18px 0; }
 .remote-top-actions { display: flex; align-items: center; gap: 12px; }
-.remote-record { margin: 18px 0; padding: 18px 0; border-bottom: 1px solid #eee; }
-.remote-warning, .form-error { color: #a03c20; white-space: pre-wrap; }
-.remote-warning { padding: 16px; background: #fff3e7; border-radius: 8px; }
+.remote-record { margin: 18px 0; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.remote-warning, .form-error { color: var(--danger); white-space: pre-wrap; }
+.remote-warning { padding: 16px; background: var(--accent-soft); border-radius: 8px; }
 .remote-payment-qr { display: block; width: 250px; max-width: 100%; margin: 20px 0; }
-.simulation-payment { max-width: 360px; margin: 18px 0; padding: 20px; border: 1px solid #dfe7f1; border-radius: 14px; background: #f8fbff; text-align: center; }
-.simulation-payment-title { margin: 0; color: #45617d; font-weight: 700; }
-.simulation-payment-amount { margin: 8px 0; color: #173b61; font-size: 32px; font-weight: 800; }
-.simulation-payment .remote-payment-qr { margin: 18px auto; background: #fff; }
+.simulation-payment { max-width: 360px; margin: 18px 0; padding: 20px; border: 1px solid var(--info-line); border-radius: 14px; background: var(--surface-2); text-align: center; }
+.simulation-payment-title { margin: 0; color: var(--info); font-weight: 700; }
+.simulation-payment-amount { margin: 8px 0; color: var(--primary-ink); font-size: 32px; font-weight: 800; }
+.simulation-payment .remote-payment-qr { margin: 18px auto; background: var(--surface); }
 .data-list dd { white-space: pre-wrap; word-break: break-word; }
 .surface { margin-bottom: 20px; }
 .platform-nav { overflow-y: auto; }
@@ -20,17 +20,17 @@ input[type=number] { appearance: textfield; }
   margin: 14px auto 0;
   max-width: 760px;
   padding: 12px 16px;
-  border: 1px solid rgba(73, 92, 117, .18);
+  border: 1px solid color-mix(in srgb, var(--faint) 18%, transparent);
   border-radius: 14px;
-  color: #48566b;
-  background: #f7f9fc;
+  color: var(--text-2);
+  background: var(--surface-2);
   text-align: center;
 }
 
 .model-pending small {
   display: block;
   margin-top: 4px;
-  color: #7b8798;
+  color: var(--muted);
 }
 
 .model-send-loading {
@@ -55,7 +55,7 @@ input[type=number] { appearance: textfield; }
 
 .model-answer-incomplete {
   margin-top: 10px;
-  color: #a15c16;
+  color: var(--accent-ink);
   font-size: 13px;
 }
 
